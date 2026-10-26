@@ -116,3 +116,30 @@ Newest entries at the bottom; do not rewrite history — append.
   re-hashes every file. The mirror is trusted for bytes, not for truth.
 - **What would change:** nothing in the pipeline — only provenance of the
   bytes; every file is still checksum-verified.
+
+## 2026-10-26 — Splits: group-wise, fixed, leak-tested
+
+- **Decision:** three split families, all defined on the metadata table,
+  never on the signal:
+  - `within_subject` — per (subject, day): trials 1–4 train, trial 5
+    validation, trials 6–7 test.
+  - `cross_day` — per subject: days 1–2 train (their trial 7 =
+    validation), day 3 test.
+  - `cross_subject` — 5 folds over people, seeded shuffle, each person
+    tested exactly once; 4 whole training subjects held out as
+    validation per fold.
+  `assert_no_leak` checks index disjointness and that the defining group
+  (trial / day / person) never appears on both sides; it runs in the
+  test suite and can be called before any training run.
+- **Reason:** overlapping windows from one 5 s repetition are near-copies
+  of each other. Any split that puts two windows of the same repetition on
+  opposite sides measures memory, not recognition. Validation comes from
+  the training side so early stopping cannot see the exam.
+- **Alternative rejected:** random window-level split (inflated to ~99%,
+  meaningless); leave-one-trial-out cross-validation (7× the compute for
+  the same question); a single random subject split (one fold = one noisy
+  number, and some subjects never tested).
+- **What would change:** fewer folds → cheaper, noisier cross-subject
+  estimate; testing on trial 7 only → half the test windows.
+- **Seed:** `config.SEED = 20261026` (the date the splits were fixed).
+  Changing it changes fold membership and requires a note here.
