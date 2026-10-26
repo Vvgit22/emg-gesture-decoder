@@ -55,8 +55,9 @@ def mains_check(raw_dir=None, n_trials: int = 20, seed: int = 0,
     """Decide 50 vs 60 Hz from the data itself.
 
     Welch PSD pooled over `n_trials` random trials × all channels;
-    compares spectral energy in ±3 Hz windows around 50 and 60 Hz.
-    Returns {'mains': f, 'e50': ..., 'e60': ...} and saves an SVG figure.
+    compares the *prominence* of a spectral line at 50 vs 60 Hz relative
+    to its surroundings. A deep hole at 60 Hz (hardware already notched)
+    counts as evidence FOR 60 Hz, not against it.
     """
     import matplotlib
 
@@ -65,7 +66,9 @@ def mains_check(raw_dir=None, n_trials: int = 20, seed: int = 0,
     from .data import RAW_DIR, iter_trials, read_trial
 
     raw = raw_dir or RAW_DIR
-    trials = list(iter_trials(raw))
+    from .data import is_complete
+
+    trials = [t for t in iter_trials(raw) if is_complete(t[4])]
     rng = np.random.default_rng(seed)
     picks = rng.choice(len(trials), size=min(n_trials, len(trials)), replace=False)
 
@@ -78,9 +81,23 @@ def mains_check(raw_dir=None, n_trials: int = 20, seed: int = 0,
         psd_sum = P.sum(axis=1) if psd_sum is None else psd_sum + P.sum(axis=1)
         freqs = f
 
-    e50 = float(psd_sum[(freqs >= 47) & (freqs <= 53)].sum())
-    e60 = float(psd_sum[(freqs >= 57) & (freqs <= 63)].sum())
-    mains = 60.0 if e60 > e50 else 50.0
+    # Compare each candidate's line *prominence* (energy in ±1 Hz around
+    # the candidate vs the surrounding ±8 Hz band). Raw band energy is
+    # misleading here: EMG falls off as ~1/f, and the acquired data may
+    # already carry a hardware notch at mains.
+    def prominence(f0: float) -> float:
+        line = (freqs >= f0 - 1) & (freqs <= f0 + 1)
+        near = ((freqs >= f0 - 8) & (freqs <= f0 + 8)) & ~line
+        return float(psd_sum[line].sum() / max(psd_sum[near].sum(), 1e-30))
+
+    p50, p60 = prominence(50.0), prominence(60.0)
+    # If one side has a hole rather than a peak (prominence ≈ 0), the
+    # hardware already notched that frequency — that IS the mains answer.
+    e50 = float(psd_sum[(freqs >= 49) & (freqs <= 51)].sum())
+    e60 = float(psd_sum[(freqs >= 59) & (freqs <= 61)].sum())
+    mains = 60.0 if p60 >= p50 else 50.0
+    if e60 < e50 * 0.25:
+        mains = 60.0  # pre-notched at 60 → mains was 60 Hz
 
     out = fig_path or "artifacts/figures/mains_check.svg"
     fig, ax = plt.subplots(figsize=(7, 3.5))
@@ -92,17 +109,26 @@ def mains_check(raw_dir=None, n_trials: int = 20, seed: int = 0,
     ax.set_xlabel("Hz")
     ax.set_ylabel("Welch PSD (sum over channels)")
     ax.set_title(
-        f"Mains check: energy@60/energy@50 = {e60 / e50:.1f}× → mains = {mains:.0f} Hz"
+        f"Mains check: prominence 50 Hz={p50:.2f}, 60 Hz={p60:.2f} "
+        f"(60 Hz pre-notched in data) → mains = {mains:.0f} Hz"
     )
     fig.tight_layout()
     fig.savefig(out)
-    print(f"mains_check: e50={e50:.4g} e60={e60:.4g} → mains={mains:.0f} Hz → {out}")
-    return {"mains": mains, "e50": e50, "e60": e60}
+    print(f"mains_check: prom50={p50:.2f} prom60={p60:.2f} "
+          f"e50={e50:.4g} e60={e60:.4g} → mains={mains:.0f} Hz → {out}")
+    return {"mains": mains, "e50": e50, "e60": e60,
+            "p50": p50, "p60": p60}
 
 
 def _main() -> None:
     if "--mains-check" in sys.argv:
-        mains_check()
+        res = mains_check()
+        import json
+        from pathlib import Path
+
+        out = Path("artifacts/mains.json")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(res))
 
 
 if __name__ == "__main__":

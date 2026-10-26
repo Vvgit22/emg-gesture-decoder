@@ -1,6 +1,6 @@
-# Mirrors the GrabMyo dataset from PhysioNet into data/raw/ (resumable, ~9.1 GB)
+# Mirrors the GrabMyo dataset from PhysioNet into data/raw/ (resumable, ~9.1 GB; JOBS=N for parallelism)
 download:
-	wget -r -N -c -np -nH --cut-dirs=3 -P data/raw https://physionet.org/files/grabmyo/1.1.0/
+	sh scripts/download.sh
 
 # Checks every downloaded file against the dataset's SHA256SUMS manifest
 verify:

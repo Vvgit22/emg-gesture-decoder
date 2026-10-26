@@ -32,3 +32,23 @@ broke. Written as the work happens.
   build with meta↔X alignment). One fix on the way: `wfdb.wrsamp` rejects
   float signals outside digital bounds, so the test writes digital
   samples (fmt 16, gain 200) like the real files. `ruff check` clean.
+
+## 2026-10-26 — Download switched to parallel fetch
+
+- `wget -r` mirrored at ~30–40 KB/s per connection; measured the zip
+  endpoint at ~28 KB/s too — per-connection throttle on PhysioNet's side.
+  Replaced `make download` with `scripts/download.sh`: reads the file
+  list from SHA256SUMS.txt and fetches with `xargs -P` + `curl -C -`
+  (resumable). Measured ~19–20 MB/min aggregate at both JOBS=16 and
+  JOBS=32 — the server caps aggregate bandwidth, so ~9.8 GB ⇒ ~8 h.
+  Running in background (`/tmp/emg-download2.log`).
+- Added `data.is_complete()`: the .hea lands before its .dat, so a pair
+  looks present mid-download; checks .dat size ≥ header sig_len×n_sig×bps.
+  `mains_check` and `windows.build` skip incomplete trials.
+- **Mains check done** on the first 120 complete trials: PSD shows a
+  deep hole at exactly 60 Hz (hardware pre-notched) → mains = 60 Hz.
+  Recorded in DECISIONS + `artifacts/mains.json`; figure
+  `artifacts/figures/mains_check.svg`.
+- Smoke build on subject 1's completed trials (`--subjects 1`):
+  N=3990 windows, C=28, W=256, 55 MB, wall 2 s, peak RSS 12.9 MB —
+  pipeline end-to-end works on real data (test output deleted).

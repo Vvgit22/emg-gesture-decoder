@@ -32,7 +32,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from .config import FS_OUT, KEEP, N_CHANNELS, STEP, TRIAL_DROP_S, WIN
-from .data import RAW_DIR, iter_trials, read_trial
+from .data import RAW_DIR, is_complete, iter_trials, read_trial
 
 REPO = Path(__file__).resolve().parents[2]
 MEMMAP_DIR = REPO / "data" / "memmap"
@@ -60,7 +60,8 @@ def build(subjects: list[int] | None = None, out_dir: Path = MEMMAP_DIR,
     import wfdb
 
     trials = [t for t in iter_trials(raw_dir)
-              if subjects is None or t[0] in subjects]
+              if (subjects is None or t[0] in subjects)
+              and is_complete(t[4])]
     # Two passes: count windows first (memmap needs its final size up
     # front). Headers alone give sample counts — no need to read 9 GB twice.
     counts: list[int] = []

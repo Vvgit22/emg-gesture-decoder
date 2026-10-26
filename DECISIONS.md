@@ -84,8 +84,19 @@ Newest entries at the bottom; do not rewrite history — append.
   order 1–17; the 17th is 'Rest'. Filenames carry `gesture1…gesture17`
   directly (1806 records each in RECORDS), so no remapping is needed.
 
-## 2026-10-26 — Mains frequency
+## 2026-10-26 — Mains frequency: 60 Hz, already notched in the data
 
-- **Status:** pending empirical check (Welch PSD on 20 random trials,
-  figure at `artifacts/figures/mains_check.svg`). Waterloo, Canada →
-  expect 60 Hz; the notch frequency follows the data, not the guess.
+- **Decision:** notch at 60 Hz.
+- **Evidence (not a guess):** pooled Welch PSD over 20 random trials shows
+  essentially zero energy in a ±1 Hz band at 60 Hz while the surrounding
+  52–68 Hz band is populated — a deep hole at exactly 60 Hz, i.e. the
+  acquisition hardware already applied a 60 Hz mains notch. A plain
+  energy comparison would wrongly pick 50 Hz (the 1/f tail is higher at
+  lower frequencies); `mains_check` therefore measures line *prominence*
+  and treats a pre-notched hole as evidence for that frequency.
+- **Alternative rejected:** skip the notch because the hardware already
+  did it — rejected as fragile (a second zero-phase notch on an already
+  empty band is a cheap no-op; if any trial lacks the hardware notch it
+  still protects the features).
+- **Figure:** `artifacts/figures/mains_check.svg`; result stored in
+  `artifacts/mains.json` and read by `windows.build`.

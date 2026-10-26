@@ -53,6 +53,24 @@ def parse_trial_name(name: str) -> tuple[int, int, int, int] | None:
     return tuple(int(m.group(k)) for k in ("session", "subject", "gesture", "trial"))
 
 
+def is_complete(path: str | Path) -> bool:
+    """True when the .dat file holds as many bytes as the header claims.
+
+    Guards against reading a file that is still mid-download: the .hea is
+    tiny and arrives before its (large) .dat, so a pair can look present
+    while the data file is short.
+    """
+    path = Path(path)
+    try:
+        hdr = wfdb.rdheader(str(path))
+    except Exception:
+        return False
+    bps = {"16": 2, "24": 4, "32": 4, "80": 1}.get(str(hdr.fmt[0]), 2)
+    expected = hdr.sig_len * hdr.n_sig * bps
+    dat = path.with_suffix(".dat")
+    return dat.exists() and dat.stat().st_size >= expected
+
+
 def iter_trials(raw_dir: str | Path = RAW_DIR):
     """Yield (subject, session, gesture, trial, path) for every .hea record.
 
