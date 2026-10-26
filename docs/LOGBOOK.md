@@ -74,3 +74,25 @@ broke. Written as the work happens.
   authoritative anyway). Relaunched 15:54:45 — measured **521 MB/min**
   (~8.7 MB/s, 31 active curls) ⇒ ~18 min for the remaining ~9.7 GB.
   DECISIONS updated.
+
+## 2026-10-26 — Download finished, verified, full memmap built
+
+- S3 download finished ~16:20 (9.59 GB in ~22 min from relaunch at
+  15:54; aggregate ~7 MB/s with bursts to ~500 MB/min). First verify
+  pass: 30,465 ok / 14 failed / 236 missing — the stragglers were curls
+  that had silently errored mid-file; the 14 corrupt were deleted and a
+  second `download.sh` run filled all gaps. Final
+  `uv run python -m emgdec.data --verify`: **30,715 ok, 0 failed, 0
+  missing** (97 s for the full re-hash).
+- Full `python -m emgdec.windows` (`/usr/bin/time -l`):
+  **N=537,285 windows, C=28, W=256, X.f16 = 7.70 GB, wall 434 s,
+  peak RSS 2.75 GB** (< 6 GB bound). N equals exactly 15,351 trials ×
+  35 windows/trial — complete coverage.
+- Trial audit on `meta.parquet`: all 43 subjects × 3 sessions ×
+  17 gestures × 7 trials present, exactly 35 windows each, **0 missing,
+  0 extra**; 15,351 .hea files on disk match.
+- `uv run pytest`: **14 passed** — includes the lead's
+  `test_splits_no_leak.py` (fake-data + real-data leak checks on all
+  three splits, all clean). `uv run ruff check`: clean.
+- Note: `splits.py` + `test_splits_no_leak.py` were authored by the lead
+  and left uncommitted in the tree; all my files are committed.
