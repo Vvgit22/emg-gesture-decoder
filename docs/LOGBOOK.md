@@ -96,3 +96,35 @@ broke. Written as the work happens.
   three splits, all clean). `uv run ruff check`: clean.
 - Note: `splits.py` + `test_splits_no_leak.py` were authored by the lead
   and left uncommitted in the tree; all my files are committed.
+
+## 2026-10-26 — Classical features + LDA baselines
+
+- `features.py` --cache: 11 features × 28 channels = **308 columns** for all
+  **537,285 windows** → `data/memmap/features.f32` (~0.62 GB float32) +
+  `features_names.json`. Wall time **119 s**, chunked in batches of 20,000.
+- LDA sweep (`solver='lsqr'`, `shrinkage='auto'`, Ledoit–Wolf): 3 split kinds ×
+  3 channel configs = **531 runs**, all saved via `save_run` under
+  `artifacts/runs/lda/<config>/<kind>/`. Whole sweep wall time **~90 s**
+  (train_seconds summed per cell ≈ a few minutes; M-series chip). No
+  convergence warnings or failures on any split.
+- `evaluate.py` table (accuracy %, ± std over splits; chance 5.9%):
+
+  | config | within_subject | cross_day | cross_subject |
+  |---|---|---|---|
+  | forearm | 82.0 ± 8.9 | 72.2 ± 8.8 | 53.1 ± 2.7 |
+  | wrist | 84.7 ± 7.6 | 68.7 ± 11.6 | 40.6 ± 2.7 |
+  | both | 93.4 ± 5.7 | 87.0 ± 7.3 | 67.9 ± 2.2 |
+
+- Surprises:
+  - The **wrist ring alone beats the forearm alone within-subject**
+    (84.7 vs 82.0) but collapses cross-subject (40.6 vs 53.1) — wrist signal
+    seems more subject-specific, forearm more transferable.
+  - Cross-day is unexpectedly strong with both rings (87.0%) — day-to-day
+    electrode shift hurts less than person-to-person anatomy.
+  - Gesture 16 "Hand Close" is heavily confused with gesture 1
+    (cross-day confusion: row 1 → col 16 ≈ 1004 windows) — worth checking
+    for CNNs later.
+- Figures written from `results.json` only (no recompute):
+  `confusion_lda_both_{within_subject,cross_day,cross_subject}.svg`,
+  `accuracy_by_split_lda.svg`, `within_subject_per_subject_lda.svg`.
+- `uv run pytest`: 29 passed; `ruff check` clean.

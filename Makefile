@@ -17,3 +17,22 @@ test:
 # Lints the source and tests
 lint:
 	uv run ruff check src tests
+
+# Computes all 11 features/channel for every window -> data/memmap/features.f32 (~100 s)
+features:
+	uv run python -m emgdec.features --cache
+
+# Runs the LDA baseline sweep: 3 split kinds x 3 channel configs = 531 run files
+baselines:
+	uv run python -m emgdec.baselines --kind all --config all
+
+# Aggregates artifacts/runs/**/*.json into artifacts/results.json and prints the table
+evaluate:
+	uv run python -m emgdec.evaluate
+
+# Draws the five result figures (SVG) from artifacts/results.json
+figures:
+	uv run python -m emgdec.figures
+
+# End-to-end replay of checkpoint 1C: features -> baselines -> evaluate -> figures
+reproduce: features baselines evaluate figures

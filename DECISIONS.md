@@ -143,3 +143,66 @@ Newest entries at the bottom; do not rewrite history — append.
   estimate; testing on trial 7 only → half the test windows.
 - **Seed:** `config.SEED = 20261026` (the date the splits were fixed).
   Changing it changes fold membership and requires a note here.
+
+## 2026-10-26 — Feature set: 11 hand-crafted features per channel
+
+- **Decision:** per window, per channel: RMS, MAV, waveform length, zero
+  crossings, slope sign changes, Hjorth mobility + complexity, and four
+  Welch band powers (20–50, 50–100, 100–200, 200–450 Hz, nperseg=128) —
+  11 × 28 = 308 features per window.
+- **Reason:** this is the classic sEMG feature set (Hudgins' time-domain
+  features + frequency-domain staples). Every one is cheap, interpretable,
+  and decades of literature says it works. It gives the deep model a hard
+  baseline to beat instead of a straw man.
+- **Alternative rejected:** raw windows into LDA (too many dimensions,
+  hopeless); a bigger kitchen-sink set (marginal gains, slower, harder to
+  explain).
+- **What would change:** adding features changes `features.f32` width and
+  every downstream model's input size — bump the cache and re-run.
+
+## 2026-10-26 — ZC/SSC threshold: fixed 1e-3 in standardised units
+
+- **Decision:** zero crossings and slope sign changes count a crossing only
+  when the signal moves by more than 0.001 in the *train-standardised*
+  units used downstream; for the raw float16 windows in the cache we apply
+  the same 1e-3 on z-scored per-channel data.
+- **Reason:** without a dead-zone, noise wiggle around zero inflates the
+  count; scaling the threshold per channel (e.g. 0.01×std) makes the count
+  depend on amplitude, which defeats the point — the threshold exists to
+  ignore *quantisation/hiss*, not to adapt to the gesture.
+- **Alternative rejected:** threshold = 0.01 of channel std (varies with
+  amplitude; rest windows get absurdly low thresholds); zero threshold
+  (noise-dominated counts).
+- **What would change:** a different threshold only shifts ZC/SSC
+  distributions; all models would need re-caching.
+
+## 2026-10-26 — LDA solver: lsqr + shrinkage='auto'
+
+- **Decision:** `LinearDiscriminantAnalysis(solver='lsqr',
+  shrinkage='auto')` — Ledoit–Wolf shrinkage estimated from the training
+  fold each time.
+- **Reason:** with 176–308 features and ~20k–400k training windows the
+  covariance is fine but shrinkage still guards against collinear features
+  (e.g. RMS vs MAV). 'auto' needs no hyperparameter tuning, so the
+  validation split is genuinely unused — there is no early stopping or
+  model selection for LDA.
+- **Alternative rejected:** solver='svd' (no shrinkage, unstable when
+  features correlate); eigen with a hand-picked shrinkage (one more knob
+  to justify and tune).
+- **What would change:** a different solver changes all 531 baselines;
+  re-run the sweep.
+
+## 2026-10-26 — Standardisation statistics from the training fold only
+
+- **Decision:** mean and std for feature standardisation are computed on
+  the training indices of each split only; the same transform is applied
+  to validation and test.
+- **Reason:** test-fold statistics leak information about the test
+  distribution into the fitted pipeline — the model would implicitly
+  "peek". It is also the honest version of the per-channel standardisation
+  deferred from `preprocess.py`.
+- **Alternative rejected:** global standardisation computed once over all
+  windows (leaks test data, inflates every split's score); per-channel
+  standardisation inside preprocessing (same problem, earlier).
+- **What would change:** refitting scalars on all data would raise
+  reported accuracies and invalidate the numbers as honest estimates.
