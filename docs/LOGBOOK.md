@@ -52,3 +52,12 @@ broke. Written as the work happens.
 - Smoke build on subject 1's completed trials (`--subjects 1`):
   N=3990 windows, C=28, W=256, 55 MB, wall 2 s, peak RSS 12.9 MB —
   pipeline end-to-end works on real data (test output deleted).
+- `make verify` mid-download: manifest-line parse bug found and fixed
+  (single-space separator) → now reports `386 ok, 29 failed, 30300
+  missing`; the 29 "failed" are files still being fetched by `curl -C -`
+  and will verify once the download completes.
+- Repo pushed to github.com/Vvgit22/emg-gesture-decoder (public, branch
+  `master`): commits `2c41e21` Scaffold, `7223181` data pipeline,
+  `25cd43f` verify fix.
+- Full `--subjects` build is scheduled once the ~9.8 GB download
+  finishes (~8 h at the server's ~330 KB/s aggregate cap).
