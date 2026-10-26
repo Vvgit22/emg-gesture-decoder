@@ -100,7 +100,7 @@ def verify(raw_dir: str | Path = RAW_DIR) -> tuple[int, int, list[str]]:
         line = line.strip()
         if not line:
             continue
-        digest, _, name = line.partition("  ") or line.split(" ", 1)
+        digest, name = line.split(None, 1)
         name = name.strip()
         f = raw / name
         if not f.exists():
