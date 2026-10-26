@@ -61,3 +61,16 @@ broke. Written as the work happens.
   `25cd43f` verify fix.
 - Full `--subjects` build is scheduled once the ~9.8 GB download
   finishes (~8 h at the server's ~330 KB/s aggregate cap).
+
+## 2026-10-26 — Switched download to the S3 mirror
+
+- Lead verified PhysioNet's open-data S3 bucket
+  (`physionet-open.s3.amazonaws.com`) serves the same tree unthrottled.
+  Stopped the parallel physionet.org run at ~156 MB, pruned 27
+  incomplete .dat/.hea records via `is_complete`, rewrote
+  `scripts/download.sh` (S3 base, `SRC=physionet` fallback; file list
+  still built from SHA256SUMS.txt — an S3 listing paginated attempt
+  returned HTTP 400 on continuation tokens, and the manifest is
+  authoritative anyway). Relaunched 15:54:45 — measured **521 MB/min**
+  (~8.7 MB/s, 31 active curls) ⇒ ~18 min for the remaining ~9.7 GB.
+  DECISIONS updated.

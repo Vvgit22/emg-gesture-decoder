@@ -100,3 +100,19 @@ Newest entries at the bottom; do not rewrite history — append.
   still protects the features).
 - **Figure:** `artifacts/figures/mains_check.svg`; result stored in
   `artifacts/mains.json` and read by `windows.build`.
+
+## 2026-10-26 — Download mirror: PhysioNet S3 open-data bucket
+
+- **Decision:** fetch dataset bytes from `physionet-open.s3.amazonaws.com`
+  (PhysioNet's official open-data AWS mirror), keeping
+  `physionet.org/files/...` as a documented `SRC=physionet` fallback in
+  `scripts/download.sh`.
+- **Reason:** physionet.org throttles to ~30 KB/s per connection and caps
+  aggregate at ~330 KB/s (measured at 16 and 32 workers) → ~8 h for
+  9.8 GB. The S3 mirror measured ~8.7 MB/s sustained → ~20 min.
+- **Alternative rejected:** keep waiting on the throttled mirror; also
+  rejected: trusting S3 for *correctness* — the file list and integrity
+  come from `SHA256SUMS.txt` served by physionet.org, and `make verify`
+  re-hashes every file. The mirror is trusted for bytes, not for truth.
+- **What would change:** nothing in the pipeline — only provenance of the
+  bytes; every file is still checksum-verified.
