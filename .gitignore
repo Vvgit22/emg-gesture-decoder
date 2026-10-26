@@ -11,4 +11,4 @@ wheels/
 
 # Data and run artefacts (never committed)
 data/
-artifacts/runs/
+artifacts/runs/**/*.log
