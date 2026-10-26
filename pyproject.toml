@@ -1,0 +1,29 @@
+[project]
+name = "emgdec"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Vvgit22", email = "vvadanici@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib==3.10.3",
+    "numpy==2.3.2",
+    "onnx==1.19.0",
+    "onnxruntime==1.22.0",
+    "pyarrow==21.0.0",
+    "pytest==8.4.1",
+    "ruff==0.12.9",
+    "scikit-learn==1.7.1",
+    "scipy==1.16.1",
+    "torch==2.8.0",
+    "wfdb==4.3.0",
+]
+
+[project.scripts]
+emgdec = "emgdec:main"
+
+[build-system]
+requires = ["uv_build>=0.12.22,<0.13.0"]
+build-backend = "uv_build"
