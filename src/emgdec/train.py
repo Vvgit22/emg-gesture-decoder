@@ -187,7 +187,7 @@ def _should_save_pt(kind: str, config: str) -> bool:
 
 
 def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
-                config: str, *, crop: int = 256,
+                config: str, *, crop: int = 256, seed_offset: int = 0,
                 device: torch.device | str | None = None,
                 max_epochs: int | None = None, patience: int | None = None,
                 seed: int = SEED, fold_index: int = 0,
@@ -213,8 +213,8 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
 
     # Seed BEFORE the model exists, so init order is identical whether a
     # split runs alone or after another (resume-order independence).
-    torch.manual_seed(seed + fold_index)
-    np.random.seed(seed + fold_index)
+    torch.manual_seed(seed + 10000 * seed_offset + fold_index)
+    np.random.seed(seed + 10000 * seed_offset + fold_index)
     model = TinyCNN(len(chans), N_GESTURES)
     # Per-channel stats over TRAIN windows only; clamped inside the model.
     tr32 = Xtr.astype(np.float32)
@@ -227,7 +227,7 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
     t0 = time.time()
     best_state, best_val, epochs_run = fit(
         model, Xtr, ytr, Xva, yva, device=device, max_epochs=max_epochs,
-        patience=patience, seed=seed + fold_index, batch=batch, lr=lr,
+        patience=patience, seed=seed + 10000 * seed_offset + fold_index, batch=batch, lr=lr,
         weight_decay=weight_decay)
     model.load_state_dict(best_state)
     train_seconds = time.time() - t0
@@ -240,7 +240,7 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
     if save_weights is None:
         save_weights = _should_save_pt(split.kind, config) and crop == 256
     prov = prov_collect(
-        seed=seed + fold_index, opt=params, device=str(device), split=split,
+        seed=seed + 10000 * seed_offset + fold_index, opt=params, device=str(device), split=split,
         extra={"selected_epoch": epochs_run,
                "selection_rule": f"max val accuracy, patience {patience}"})
     if save_weights:
@@ -294,7 +294,8 @@ def run(kind: str, config: str, *, crop: int = 256,
         device: str | None = None, max_epochs: int | None = None,
         patience: int | None = None, limit: int | None = None,
         force: bool = False, experiment: str = "dev",
-        mode: str = "fresh") -> int:
+        mode: str = "fresh", seed_offset: int = 0,
+        protocol: str = "v1") -> int:
     if mode == "report":
         from emgdec.evaluate import main as eval_main
         eval_main(["--experiment", experiment])
@@ -308,13 +309,15 @@ def run(kind: str, config: str, *, crop: int = 256,
     n = 0
     for k in kinds:
         for cfg in configs:
+            if protocol != "v1" and k != "cross_subject":
+                continue
             existing = runs_dir / model / cfg / k
             if (mode == "fresh" and not force and existing.exists()
                     and any(existing.glob("*.json"))):
                 raise SystemExit(
                     f"fresh mode: {existing} already has runs; "
                     "use --mode resume or --force")
-            for i, split in enumerate(splits.make(k, meta)):
+            for i, split in enumerate(splits.make(k, meta, protocol)):
                 if limit is not None and i >= limit:
                     break
                 rec_path = runs_dir / model / cfg / k / f"{split.name}.json"
@@ -330,7 +333,8 @@ def run(kind: str, config: str, *, crop: int = 256,
                     continue
                 rec = train_split(X, meta, split, cfg, crop=crop,
                                   device=device, max_epochs=max_epochs,
-                                  patience=patience, fold_index=i)
+                                  patience=patience, fold_index=i,
+                                  seed_offset=seed_offset)
                 save_run(rec, runs_dir)
                 n += 1
                 acc = metrics.accuracy(np.asarray(rec.confusion))
@@ -359,11 +363,19 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--experiment", default="dev")
     ap.add_argument("--mode", choices=["fresh", "resume", "report"],
                     default="fresh")
+    ap.add_argument("--seed-offset", type=int, default=0)
+    ap.add_argument("--protocol", choices=["v1", "v2"], default="v1")
+    ap.add_argument("--x", default=None,
+                    help="override window memmap dir (e.g. data/memmap_causal)")
     a = ap.parse_args(argv)
+    if a.x:
+        import emgdec.train as _t
+        _t.MEMMAP_DIR = Path(a.x)
+        _t.X_F16 = Path(a.x) / "X.f16"
     n = run(a.kind, a.config, crop=a.crop, device=a.device,
             max_epochs=a.max_epochs, patience=a.patience,
             limit=a.limit, force=a.force, experiment=a.experiment,
-            mode=a.mode)
+            mode=a.mode, seed_offset=a.seed_offset, protocol=a.protocol)
     print(f"done: {n} runs")
 
 
