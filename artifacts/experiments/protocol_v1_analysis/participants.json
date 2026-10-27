@@ -317,7 +317,7 @@
      "below70": 5,
      "below80": 16
     },
-    "trial_level_majority_accuracy": 0.2059800664451827,
+    "trial_level_majority_accuracy": 0.8465897987101817,
     "per_class": {
      "Lateral Prehension": {
       "precision": 0.6478345325709283,
@@ -725,7 +725,7 @@
      "below70": 24,
      "below80": 42
     },
-    "trial_level_majority_accuracy": 0.08305647840531562,
+    "trial_level_majority_accuracy": 0.7378020975832194,
     "per_class": {
      "Lateral Prehension": {
       "precision": 0.6209721839713578,
@@ -1144,7 +1144,7 @@
      "below70": 0,
      "below80": 4
     },
-    "trial_level_majority_accuracy": 0.1461794019933555,
+    "trial_level_majority_accuracy": 0.9278874340433848,
     "per_class": {
      "Lateral Prehension": {
       "precision": 0.7824607329842932,
@@ -1552,7 +1552,7 @@
      "below70": 1,
      "below80": 8
     },
-    "trial_level_majority_accuracy": 0.12624584717607973,
+    "trial_level_majority_accuracy": 0.9138166894664843,
     "per_class": {
      "Lateral Prehension": {
       "precision": 0.7950697674418604,

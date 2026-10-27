@@ -42,7 +42,8 @@ def _cm_for(kind: str, model: str, config: str) -> tuple[np.ndarray, dict]:
         for s in np.unique(z["subject"][te]):
             m = (z["subject"][te] == s)
             parts.setdefault(int(s), []).append(
-                (y[m], p[m], z["trial"][te][m], z["win_in_trial"][te][m]))
+                (y[m], p[m], z["trial"][te][m], z["win_in_trial"][te][m],
+                 z["session"][te][m], z["gesture"][te][m]))
     return total, parts
 
 
@@ -62,12 +63,14 @@ def _per_participant(parts: dict) -> dict[int, dict]:
 
 
 def _trial_accuracy(parts: dict) -> float:
-    """Majority vote per trial over its windows (trial-level metric)."""
+    """Majority vote per trial = (subject, session, gesture, trial):
+    the trial's gesture is compared to the modal prediction of its windows."""
     correct = tot = 0
     for s, chunks in parts.items():
-        for y, p, t, w in chunks:
-            for tr in np.unique(t):
-                m = t == tr
+        for y, p, t, w, ses, g in chunks:
+            keys = set(zip(ses.tolist(), g.tolist(), t.tolist()))
+            for se, gg, tr in keys:
+                m = (ses == se) & (g == gg) & (t == tr)
                 votes = np.bincount(p[m], minlength=N_GESTURES).argmax()
                 correct += votes == y[m][0]
                 tot += 1
@@ -124,8 +127,8 @@ def main() -> None:
         cnn = report["kinds"][kind]["cnn"]["per_participant"]
         lda = report["kinds"][kind]["lda"]["per_participant"]
         c = {int(k): v for k, v in cnn.items()}
-        l = {int(k): v for k, v in lda.items()}
-        report["kinds"][kind]["paired_cnn_minus_lda"] = _bootstrap_diff(c, l)
+        lda_p = {int(k): v for k, v in lda.items()}
+        report["kinds"][kind]["paired_cnn_minus_lda"] = _bootstrap_diff(c, lda_p)
     OUTD.mkdir(parents=True, exist_ok=True)
     (OUTD / "participants.json").write_text(json.dumps(report, indent=1))
     md = ["# Participant-level results\n",
