@@ -55,3 +55,11 @@ ablation:
 
 # Full pipeline from features through CNNs to figures (hours; sweeps are resumable)
 reproduce-full: reproduce train train-cross-subject ablation evaluate figures
+
+# Packs artifacts/site/ (demo.bin, demo.json, the two ONNX models, figures)
+site:
+	uv run python -m emgdec.site_assets
+
+# Rewrites the README results table from artifacts/results.json
+readme:
+	uv run python -m emgdec.report
