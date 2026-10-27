@@ -41,10 +41,12 @@ import warnings
 import numpy as np
 import pyarrow.parquet as pq
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.ensemble import HistGradientBoostingClassifier
 
 from emgdec import metrics, splits
 from emgdec.config import N_CHANNELS, N_GESTURES, SEED
-from emgdec.evaluate import RUNS_DIR, RunRecord, save_run
+from emgdec.evaluate import RunRecord, exp_runs, save_run
+from emgdec.provenance import collect as prov_collect
 from emgdec.features import FEATURES_F32, MEMMAP_DIR, N_FEATURES
 
 CONFIG_COLS = {
@@ -55,6 +57,18 @@ CONFIG_COLS = {
 
 MODEL = "lda"
 LDA_PARAMS = {"solver": "lsqr", "shrinkage": "auto", "features": N_FEATURES}
+HGB_PARAMS = {"max_iter": 200, "learning_rate": 0.1,
+              "early_stopping": False, "features": N_FEATURES}
+
+
+def _fit(model: str, Xtr, ytr, seed: int):
+    """Construct + fit the requested classifier."""
+    if model == "hgb":
+        return HistGradientBoostingClassifier(
+            max_iter=HGB_PARAMS["max_iter"],
+            learning_rate=HGB_PARAMS["learning_rate"],
+            early_stopping=False, random_state=seed).fit(Xtr, ytr)
+    return LinearDiscriminantAnalysis(solver="lsqr", shrinkage="auto").fit(Xtr, ytr)
 
 
 def _load_meta() -> dict[str, np.ndarray]:
@@ -69,7 +83,7 @@ def _feature_columns(config: str) -> np.ndarray:
 
 
 def run_split(F: np.memmap, meta: dict[str, np.ndarray], split, cols: np.ndarray,
-              config: str) -> RunRecord:
+              config: str, model: str = MODEL, seed: int = SEED) -> RunRecord:
     splits.assert_no_leak(split, meta)
     Xtr = np.asarray(F[np.asarray(split.train)][:, cols], dtype=np.float32)
     Xte = np.asarray(F[np.asarray(split.test)][:, cols], dtype=np.float32)
@@ -85,38 +99,43 @@ def run_split(F: np.memmap, meta: dict[str, np.ndarray], split, cols: np.ndarray
     t0 = time.time()
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
-        clf = LinearDiscriminantAnalysis(solver="lsqr", shrinkage="auto")
         try:
-            clf.fit(Xtr, ytr)
+            clf = _fit(model, Xtr, ytr, seed)
         except UserWarning as w:
             print(f"  WARN {split.name}: {w}", flush=True)
-            clf = LinearDiscriminantAnalysis(solver="lsqr", shrinkage="auto")
-            clf.fit(Xtr, ytr)
+            clf = _fit(model, Xtr, ytr, seed)
     train_seconds = time.time() - t0
     cm = metrics.confusion(yte, clf.predict(Xte), N_GESTURES)
+    params = dict(HGB_PARAMS if model == "hgb" else LDA_PARAMS)
+    prov = prov_collect(seed=seed, opt=params, device="cpu", split=split)
     return RunRecord(
-        model=MODEL, config=config, kind=split.kind, name=split.name,
+        model=model, config=config, kind=split.kind, name=split.name,
         confusion=cm.tolist(),
         n_train=len(split.train), n_val=len(split.val), n_test=len(split.test),
-        train_seconds=train_seconds, seed=SEED, params=dict(LDA_PARAMS))
+        train_seconds=train_seconds, seed=seed, params=params,
+        provenance=prov)
 
 
-def run(kind: str, config: str) -> int:
+def run(kind: str, config: str, model: str = MODEL,
+        experiment: str = "dev", limit: int | None = None) -> int:
     meta = _load_meta()
     shape = json.loads((MEMMAP_DIR / "shape.json").read_text())
     F = np.memmap(FEATURES_F32, dtype=np.float32, mode="r",
                   shape=(shape["N"], N_CHANNELS * N_FEATURES))
+    runs_dir = exp_runs(experiment)
     kinds = list(splits.ALL) if kind == "all" else [kind]
     configs = list(CONFIG_COLS) if config == "all" else [config]
     n = 0
     for k in kinds:
         for cfg in configs:
             cols = _feature_columns(cfg)
-            for split in splits.make(k, meta):
-                rec = run_split(F, meta, split, cols, cfg)
-                save_run(rec, RUNS_DIR)
+            for i, split in enumerate(splits.make(k, meta)):
+                if limit is not None and i >= limit:
+                    break
+                rec = run_split(F, meta, split, cols, cfg, model=model)
+                save_run(rec, runs_dir)
                 n += 1
-            print(f"{cfg}/{k}: {n} runs so far", flush=True)
+            print(f"{model}/{cfg}/{k}: {n} runs so far", flush=True)
     return n
 
 
@@ -126,8 +145,12 @@ def main(argv: list[str] | None = None) -> None:
                     choices=["within_subject", "cross_day", "cross_subject", "all"])
     ap.add_argument("--config", default="all",
                     choices=["forearm", "wrist", "both", "all"])
+    ap.add_argument("--model", default="lda", choices=["lda", "hgb"])
+    ap.add_argument("--experiment", default="dev")
+    ap.add_argument("--limit", type=int, default=None)
     a = ap.parse_args(argv)
-    n = run(a.kind, a.config)
+    n = run(a.kind, a.config, model=a.model, experiment=a.experiment,
+            limit=a.limit)
     print(f"done: {n} runs")
 
 

@@ -39,6 +39,7 @@ from emgdec.config import BAND, FS_OUT, GESTURE_NAMES, N_GESTURES, WIN
 from emgdec.evaluate import RUNS_DIR
 from emgdec.models import CHANNELS, TinyCNN
 from emgdec.train import MODELS_DIR, _open_X
+from emgdec.provenance import sha256_file
 
 REPO = Path(__file__).resolve().parents[2]
 ONNX_DIR = REPO / "artifacts" / "onnx"
@@ -55,6 +56,10 @@ def _find_split(meta: dict[str, np.ndarray], kind: str, name: str):
 def _run_record(model: str, config: str, kind: str, name: str) -> dict:
     p = RUNS_DIR / model / config / kind / f"{name}.json"
     return json.loads(p.read_text())
+
+
+class ParityError(RuntimeError):
+    """Raised when the ONNX graph does not reproduce the torch model."""
 
 
 def export(model: str = "cnn", config: str = "both", kind: str = "within_subject",
@@ -86,6 +91,7 @@ def export(model: str = "cnn", config: str = "both", kind: str = "within_subject
         "classes": GESTURE_NAMES, "input": "emg: float32 [B, C, 256] raw",
         "output": "logits [B, 17]", "test_accuracy": test_acc,
         "opset": OPSET, "torch": torch.__version__,
+        "checkpoint_sha256": sha256_file(pt),
     }
     onnx_path.with_suffix(".meta.json").write_text(json.dumps(meta, indent=1))
     return onnx_path
@@ -144,9 +150,16 @@ def main(argv: list[str] | None = None) -> None:
     x_test = _test_windows(a.model, a.config, a.kind, a.name)
     res = verify(onnx_path, pt, x_test)
     _record_parity(onnx_path, res)
+    # bake parity into the meta sidecar the demo ships
+    meta_p = onnx_path.with_suffix(".meta.json")
+    mj = json.loads(meta_p.read_text())
+    mj["parity"] = res
+    meta_p.write_text(json.dumps(mj, indent=1))
     print(f"{onnx_path.name}: {onnx_path.stat().st_size/1024:.0f} KB, "
           f"parity max|d|={res['max_logit_diff']:.2e} "
           f"argmax={res['argmax_agreement']:.3f} ok={res['ok']}")
+    if not res["ok"]:
+        raise ParityError(f"{onnx_path.name}: parity check failed {res}")
 
 
 if __name__ == "__main__":

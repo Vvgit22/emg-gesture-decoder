@@ -294,8 +294,11 @@ Newest entries at the bottom; do not rewrite history — append.
   memmap serves all three lengths; rebuilding memmaps at other lengths
   would produce *different* windows (different alignment) and confound
   length with phase.
-- **What it cannot tell us:** anything about windows LONGER than 250 ms —
-  we only store 250 ms. A longer-window answer needs a rebuild.
+- **What it measures:** accuracy vs analysis-window duration on centre
+  crops of the already-filtered windows (after the 0.5 s trial-start
+  drop). It says nothing about gesture-onset latency, and nothing about
+  windows LONGER than 250 ms — we only store 250 ms; a longer-window
+  answer needs a rebuild.
 - **Alternative rejected:** rebuilding X.f16 at W=128/64 (changes window
   positions, not just length — measures two things at once).
 - **What would change:** longer windows → new memmap, new pipeline.

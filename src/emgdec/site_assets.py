@@ -181,9 +181,17 @@ def build() -> dict:
     assert (SITE / "demo.bin").stat().st_size == 17 * 28 * SEG * 2
 
     for key, (kind, name) in (("seen", SEEN), ("unseen", UNSEEN)):
-        shutil.copy(ONNX_DIR / f"cnn_both_{kind}_{name}.onnx",
-                    SITE / "models" / f"{key}.onnx")
-        shutil.copy(ONNX_DIR / f"cnn_both_{kind}_{name}.meta.json",
+        onnx = ONNX_DIR / f"cnn_both_{kind}_{name}.onnx"
+        mj = json.loads(onnx.with_suffix(".meta.json").read_text())
+        pt = (REPO / "artifacts" / "models" / "cnn" / "both" / kind
+              / f"{name}.pt")
+        from emgdec.provenance import sha256_file
+        assert mj.get("checkpoint_sha256") == sha256_file(pt), \
+            f"{key}: meta checkpoint hash != current .pt"
+        assert mj.get("parity", {}).get("ok"), \
+            f"{key}: meta parity missing or failed"
+        shutil.copy(onnx, SITE / "models" / f"{key}.onnx")
+        shutil.copy(onnx.with_suffix(".meta.json"),
                     SITE / "models" / f"{key}.meta.json")
 
     shutil.copy(REPO / "artifacts" / "results.json", SITE / "results.json")

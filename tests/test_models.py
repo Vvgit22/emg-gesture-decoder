@@ -86,3 +86,24 @@ def test_train_split_end_to_end_and_leak_checked(monkeypatch):
     assert np.asarray(rec.confusion).shape == (17, 17)
     assert np.asarray(rec.confusion).sum() == rec.n_test
     assert rec.epochs_run <= 2
+
+
+def test_train_split_deterministic_and_order_independent():
+    """Same split twice on CPU: bit-identical record; and a run executed
+    after a different split must equal one executed alone."""
+    meta = _fake_meta()
+    n = len(meta["subject"])
+    rng = np.random.default_rng(2)
+    X = rng.normal(0, 1, (n, 28, 16)).astype(np.float32)
+    sp = splits.make("within_subject", meta)
+    r1 = T.train_split(X, meta, sp[0], "both", device="cpu", max_epochs=2,
+                       patience=1, save_weights=False)
+    r2 = T.train_split(X, meta, sp[0], "both", device="cpu", max_epochs=2,
+                       patience=1, save_weights=False)
+    assert r1.confusion == r2.confusion
+    # order independence: run split 1 first, then split 0 again
+    T.train_split(X, meta, sp[1], "both", device="cpu", max_epochs=1,
+                  patience=1, save_weights=False)
+    r3 = T.train_split(X, meta, sp[0], "both", device="cpu", max_epochs=2,
+                       patience=1, save_weights=False)
+    assert r1.confusion == r3.confusion
