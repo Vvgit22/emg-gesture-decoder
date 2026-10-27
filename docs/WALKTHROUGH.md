@@ -313,24 +313,69 @@ What this says, in words:
 - The most confused pair is "Hand Close" vs "Lateral Prehension" (a pinch
   grip), which makes anatomical sense: both close the hand.
 
-Figures: `artifacts/figures/accuracy_by_split_lda.svg`,
-`confusion_lda_both_*.svg`, `within_subject_per_subject_lda.svg`.
+Figures: `artifacts/figures/accuracy_by_split.svg`,
+`confusion_lda_both_*.svg`, `within_subject_per_subject.svg`.
+
+---
+
+## 8b. What the network found
+
+Same exams, same leak checks, now the TinyCNN. Accuracy, mean ± standard
+deviation across splits; the LDA number from the table above in brackets:
+
+| Electrodes | Within-subject | Cross-day | Cross-subject |
+|---|---|---|---|
+| Forearm (16) | 84.0 ± 8.4 (82.0) | 79.3 ± 9.5 (72.2) | 68.7 ± 3.4 (53.1) |
+| Wrist (12) | 89.7 ± 6.4 (84.7) | 76.2 ± 11.4 (68.7) | 60.2 ± 2.2 (40.6) |
+| Both (28) | 92.7 ± 5.9 (93.4) | **88.8 ± 5.7** (87.0) | **79.6 ± 2.5** (67.9) |
+
+What this says, in words:
+
+- **When the model knows you, the network does not help.** Within-subject
+  with both rings, LDA and the network tie at about 93%. There is only
+  2,380 windows of training data per split, and the eleven hand-made
+  features already describe the gestures well enough. A fancier model is
+  not a free lunch.
+- **The harder the exam, the more the network wins.** Next day: +2 points.
+  Stranger: **+12 points** (68 → 80). The hand-made features are tuned to
+  one person's amplitude and spectrum; the learned templates generalise
+  across arms better. This is the headline result of the project.
+- **Wrist-only on strangers jumps most of all** (41 → 60). The wrist signal
+  is still the most personal of the three, but far less so than the LDA
+  table made it look: part of that "personal" effect was the features, not
+  the signal.
+- **The five stranger folds agree** (76.0–82.3%), so 79.6% is stable.
+- **Window length matters, but less than you might think.** Trained and
+  tested on the middle 125 ms of each window instead of 250 ms, the network
+  loses about 1.5 points on strangers (78.0%); on 62.5 ms it loses about 4
+  (76.2%). A gesture is recognisable from a sixteenth of a second of muscle
+  signal. The ablation says nothing about windows *longer* than 250 ms,
+  because the stored windows are 250 ms.
+- **Which gestures are hard** (cross-subject, both rings, F1 per class):
+  anything that moves the wrist or forearm is easy (Wrist Extension 96%,
+  Supination 92%, Flexion 91%, Pronation 91%, Rest 92%). Fine finger
+  gestures are hard: Thumb-Index Opposition 63%, Thumb Adduction 65%,
+  Index-and-Middle Extension 68%, Hand Close 68%. The single biggest
+  confusion is the same as for LDA: 28% of Hand Close windows are called
+  Lateral Prehension. Both are a closing hand; the difference is where the
+  thumb ends up, which is a small signal in a forearm recording.
+
+Figures: `artifacts/figures/accuracy_by_split.svg`,
+`confusion_cnn_both_*.svg`, `per_class_f1_cnn_both_*.svg`,
+`ablation_window_length.svg`.
 
 ---
 
 ## 9. What comes next
 
-- **A small neural network** (a 1-D convolutional network, ~50k parameters)
-  that reads the raw 28 × 256 window instead of the 11 summary features,
-  trained on the same splits with the same leak checks, so the two models
-  are compared on identical exams.
-- **Ablations**: what changes with 150 ms or 400 ms windows; how much each
-  electrode ring contributes.
-- **Export to the browser**: the trained network is converted to a standard
-  format (ONNX) and runs live in a web page on held-out test windows, so a
-  visitor can watch it classify.
-
-Each of those will get its own section here when it exists.
+- **The browser demo**: the two exported ONNX models (one that has seen the
+  demo subject, one that has not) run live in a web page on held-out test
+  windows, so a visitor can watch the same 250 ms of signal be classified
+  by both and see the "stranger" gap for themselves.
+- **Not done, and worth knowing**: no data augmentation, no per-subject
+  calibration, no windows longer than 250 ms, no model bigger than 57k
+  parameters. Each would be one more row in the table, trained on the same
+  splits with the same checks.
 
 ---
 
