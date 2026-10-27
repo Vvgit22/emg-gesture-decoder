@@ -14,7 +14,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from emgdec.evaluate import RESULTS
+from emgdec.evaluate import exp_results
+RESULTS = exp_results("protocol_v1")
 
 REPO = Path(__file__).resolve().parents[2]
 README = REPO / "README.md"
