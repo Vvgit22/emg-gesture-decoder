@@ -317,3 +317,37 @@ Newest entries at the bottom; do not rewrite history — append.
 - **Alternative rejected:** exporting every split's model (storage for no
   demo value); skipping parity (silent browser-vs-training mismatch).
 - **What would change:** a different demo story → different named exports.
+
+## 2026-10-27 — Demo clip: trial 6 of subject 1, quantised to int16
+
+- **Decision:** the browser demo plays the central 2.0 s of subject 1,
+  session 1, trial 6 — a trial in the TEST set of both exported models
+  (asserted at build time, not assumed). Stored as int16 with one global
+  scale (max|x|/32000); the page dequantises with the scale in demo.json.
+- **Reason:** 2 s × 17 gestures is long enough to watch the decoder work
+  and short enough to ship (~1.9 MB). int16 halves the file vs float32
+  and cost nothing: measured quantisation agreement on all 255 windows
+  was 1.000 — not one argmax changed.
+- **Alternative rejected:** float32 bundle (3.8 MB for zero measured
+  gain); per-gesture scaling (nicer SNR but breaks "one file, one scale"
+  and the parity story); a train trial (would demo memorisation, not
+  generalisation).
+- **What would change:** a different clip choice changes demo.bin and
+  demo.json's source block; re-run `make site`.
+
+## 2026-10-27 — ORT web: version 1.30.0, jsep wasm, single thread
+
+- **Decision:** `onnxruntime-web@1.30.0` (latest stable published ≥7 days
+  before integration; 1.31.x were dev builds), the
+  `ort-wasm-simd-threaded.jsep` pair copied from node_modules into
+  `public/emg/ort/`, `wasm.numThreads = 1`.
+- **Reason:** ORT 1.30's wasm backend loads the jsep build — the plain
+  `ort-wasm-simd-threaded` pair is never fetched (verified in headless
+  Chrome). numThreads=1 because GitHub Pages sends no COOP/COEP headers,
+  so SharedArrayBuffer is unavailable and a threaded build would fall
+  back with warnings.
+- **Alternative rejected:** loading wasm from a CDN (breaks offline,
+  unpinned, third-party fetch on a page about honest numbers); bundling
+  wasm through Vite (public/ keeps it out of the JS graph entirely).
+- **What would change:** an ORT version bump changes which wasm filenames
+  to copy — the sync script is the single place that lists them.
