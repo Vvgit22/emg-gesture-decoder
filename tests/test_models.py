@@ -121,3 +121,14 @@ def test_trial_majority_vote_groups_full_key():
         parts[1].append((y, p, np.full(35, trial), np.arange(35),
                          np.ones(35, int), np.full(35, 4)))
     assert _trial_accuracy(parts) == 1.0
+
+
+def test_v2_splits_same_tests_distinct_vals():
+    meta = _fake_meta()
+    v1 = splits.make("cross_subject", meta)
+    v2 = splits.make("cross_subject", meta, protocol="v2")
+    for s1, s2 in zip(v1, v2):
+        assert np.array_equal(np.sort(s1.test), np.sort(s2.test))
+    subs_v1 = [set(meta["subject"][s.val].tolist()) for s in v1]
+    subs_v2 = [set(meta["subject"][s.val].tolist()) for s in v2]
+    assert any(a != b for a, b in zip(subs_v1, subs_v2))  # v2 re-draws vals
