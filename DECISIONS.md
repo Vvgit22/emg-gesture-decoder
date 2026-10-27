@@ -206,3 +206,114 @@ Newest entries at the bottom; do not rewrite history — append.
   standardisation inside preprocessing (same problem, earlier).
 - **What would change:** refitting scalars on all data would raise
   reported accuracies and invalidate the numbers as honest estimates.
+
+## 2026-10-26 — CNN architecture: ~57k-parameter 1-D conv stack
+
+- **Decision:** four strided Conv1d+BatchNorm+ReLU blocks (C→32→64→64→96,
+  kernels 7/5/5/3, stride 2), `AdaptiveAvgPool1d(1)`, Dropout(0.3),
+  Linear(96→17). ~57k parameters for C=28.
+- **Reason:** a small temporal-conv net is the standard strong baseline
+  for sEMG: enough capacity to learn gesture features, small enough that
+  one split trains in seconds and the ONNX file ships in ~200 KB.
+- **Alternative rejected:** a bigger ResNet-style net (slower, more
+  overfitting surface, no evidence it is needed at 17 classes); a
+  recurrent net (harder to export, slower per epoch); averaging-pool
+  replaced by flatten (would tie the model to exactly 256 samples and
+  break the window-length ablation).
+- **What would change:** capacity changes alter every CNN run and the
+  exported graph — full retrain.
+- **No augmentation, no label smoothing:** kept out deliberately so the
+  base model is simple and honest; augmentation is a named future
+  ablation, not done here.
+
+## 2026-10-26 — Normalisation lives inside the model
+
+- **Decision:** `TinyCNN` registers `mean`/`std` buffers [C,1] and does
+  `(x - mean)/std` as the first op; stats come from the split's TRAIN
+  windows only (`set_normalisation`, std clamped at 1e-6).
+- **Reason:** the browser demo feeds raw electrode signal; if the stats
+  were a sidecar, the exported graph would not be self-contained and the
+  demo could silently apply the wrong scaling. Train-only stats are the
+  same no-peek rule as the LDA standardisation.
+- **Alternative rejected:** a `normalisation.json` sidecar (two artifacts
+  to keep in sync, easy to mismatch); preprocessing-time standardisation
+  (leaks test distribution — already rejected for LDA).
+- **What would change:** moving normalisation out would change every
+  exported model's expected input and the demo code.
+
+## 2026-10-26 — Optimiser, schedule and early stopping
+
+- **Decision:** AdamW(lr=2e-3, weight_decay=1e-2), cosine LR over
+  max_epochs, batch 256, plain cross-entropy. Early stopping on
+  *validation* accuracy only (patience 6 within/cross-day, 3
+  cross-subject), best-val weights restored before scoring test once.
+- **Reason:** standard, boring, works. Early stopping on val is the only
+  stopping rule that cannot see the exam; cosine decay removes the "when
+  to drop the LR" hyperparameter.
+- **Alternative rejected:** stopping on a fixed epoch count (would either
+  under- or over-fit per split); any test-informed stopping (invalidates
+  every number); SGD+momentum (needs more tuning for the same result).
+- **What would change:** different budget → different weights; retrain
+  and re-aggregate.
+
+## 2026-10-26 — Epoch budget per split kind
+
+- **Decision:** within_subject / cross_day: max_epochs=40, patience=6.
+  cross_subject: max_epochs=15, patience=3.
+- **Reason:** a cross-subject fold trains on ~35x more windows
+  (~375k vs ~2–7k); 40 epochs there would burn GPU-hours per fold for
+  gains early stopping rarely uses. Patience 3 still lets it stop early.
+- **Alternative rejected:** same 40/6 everywhere (wasted compute);
+  subsampling the cross-subject train set (throws away data instead of
+  budgeting epochs — information is what we want more of there).
+- **What would change:** budgets are in `train.BUDGET`; raising them
+  needs a LOGBOOK note with the new timings.
+
+## 2026-10-26 — Reproducibility: seeded per split; MPS is not bitwise
+
+- **Decision:** `torch.manual_seed(SEED + fold_index)`, same for numpy
+  and the shuffle Generator; `device` and `torch.__version__` stored in
+  each run's params.
+- **Reason:** fold_index makes each split's seed independent and stable
+  if the sweep is resumed. CPU runs are bitwise reproducible; MPS runs
+  are reproducible up to float-order noise (same code, same seed, tiny
+  last-digit differences possible — noted, accepted, never silently
+  claimed).
+- **Alternative rejected:** one global seed for all splits (resume order
+  would change results); forcing CPU for bitwise determinism (hours
+  slower; accuracy claims don't depend on float order).
+- **What would change:** changing SEED or device changes exact weights;
+  accuracies should move only within float noise on MPS.
+
+## 2026-10-26 — Window-length ablation by centre-crop, not rebuild
+
+- **Decision:** ablation uses `crop=128` and `crop=64` — a centre slice of
+  the stored 256-sample windows — recorded as models `cnn_w128`,
+  `cnn_w64` (rejected save_run names until `evaluate.MODELS` listed them).
+- **Reason:** the global-average-pool head accepts any length ≥16, so one
+  memmap serves all three lengths; rebuilding memmaps at other lengths
+  would produce *different* windows (different alignment) and confound
+  length with phase.
+- **What it cannot tell us:** anything about windows LONGER than 250 ms —
+  we only store 250 ms. A longer-window answer needs a rebuild.
+- **Alternative rejected:** rebuilding X.f16 at W=128/64 (changes window
+  positions, not just length — measures two things at once).
+- **What would change:** longer windows → new memmap, new pipeline.
+
+## 2026-10-26 — Which models are exported, and the parity bar
+
+- **Decision:** `train_split` saves .pt weights for every cross_subject
+  fold (15 files) and every `both` config split (129 within + 43 cross-day
+  + 5 cross-subject). The demo exports exactly two: within_subject
+  `s01_d1` (calibrated-to-you story) and the cross_subject fold holding
+  out subject 1 (works-on-a-stranger story). Both .onnx are committed via
+  force-add; the rest stay gitignored under artifacts/models/.
+- **Reason:** two small files (~200 KB each) carry the whole demo story;
+  committing hundreds of megabytes of checkpoints would bloat the repo.
+- **Parity bar:** max |logit diff| < 1e-4 and 100% argmax agreement
+  between torch CPU and onnxruntime CPU on 512 real test windows —
+  recorded in artifacts/onnx/parity.json. A browser demo that disagrees
+  with training is worse than no demo.
+- **Alternative rejected:** exporting every split's model (storage for no
+  demo value); skipping parity (silent browser-vs-training mismatch).
+- **What would change:** a different demo story → different named exports.

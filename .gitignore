@@ -12,3 +12,7 @@ wheels/
 # Data and run artefacts (never committed)
 data/
 artifacts/runs/**/*.log
+
+# Trained weights and exported graphs (the two demo .onnx are force-added)
+artifacts/models/
+artifacts/onnx/

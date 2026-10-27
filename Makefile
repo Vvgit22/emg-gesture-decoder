@@ -36,3 +36,22 @@ figures:
 
 # End-to-end replay of checkpoint 1C: features -> baselines -> evaluate -> figures
 reproduce: features baselines evaluate figures
+
+# Trains the CNN on within_subject + cross_day for all channel configs (resumable)
+train:
+	uv run python -m emgdec.train --kind within_subject --config all
+	uv run python -m emgdec.train --kind cross_day --config all
+
+# Trains the CNN on cross_subject for all configs — the long pole, hours
+train-cross-subject:
+	uv run python -m emgdec.train --kind cross_subject --config all
+
+# Window-length ablation: centre-crops of 125 ms and 62.5 ms, both config
+ablation:
+	uv run python -m emgdec.train --kind cross_day --config both --crop 128
+	uv run python -m emgdec.train --kind cross_day --config both --crop 64
+	uv run python -m emgdec.train --kind cross_subject --config both --crop 128
+	uv run python -m emgdec.train --kind cross_subject --config both --crop 64
+
+# Full pipeline from features through CNNs to figures (hours; sweeps are resumable)
+reproduce-full: reproduce train train-cross-subject ablation evaluate figures

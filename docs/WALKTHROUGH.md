@@ -236,6 +236,55 @@ No number on the web page is typed by hand.
 
 ---
 
+
+## 7b. The neural network (`emgdec/models.py`, `emgdec/train.py`)
+
+A convolution is a sliding detector. Imagine a tiny template — "a burst of
+energy lasting 10 ms" — dragged along the EMG trace. Wherever the trace looks
+like the template, the convolution outputs a large number; elsewhere it stays
+quiet. One convolutional layer runs a few dozen of these templates at once,
+and they are not chosen by hand: training adjusts the templates themselves
+until the scores they produce separate the gestures. Stacking four such
+layers lets later templates detect *patterns of patterns* — "a fast burst
+followed by a slow one". `TinyCNN` has about 57,000 adjustable numbers, small
+enough to train one split in a couple of seconds on a laptop GPU.
+
+LDA saw eleven hand-made numbers per channel; the network sees the raw
+signal. Hand-made features are a bet that you already know what matters —
+amplitude, roughness, spectrum. A convolutional network makes no such bet: it
+learns its own features, which is why it usually wins, and also why it can
+invent features that exploit leaks — which is why the leak checks run before
+every fit, unchanged from the LDA sweep.
+
+Two honest-training mechanics are worth naming:
+
+- **Normalisation inside the model.** EMG amplitude varies with electrode
+  placement and skin. The network begins by subtracting a per-channel mean
+  and dividing by a per-channel standard deviation — but those numbers are
+  computed from the *training* windows only and are stored *inside* the
+  model file. The browser demo can therefore feed raw electrode signal
+  straight in; the recipe for centring it travels with the graph.
+- **Early stopping.** A network trained too long memorises; too short, it
+  underfits. So after every epoch the model is scored on the *validation*
+  windows — data that is neither trained on nor the exam — and when that
+  score stops improving for a few epochs, training stops and the best-so-far
+  weights are kept. The test set is touched exactly once, at the end.
+
+## 7c. ONNX export (`emgdec/export.py`)
+
+ONNX is a standard file format for a trained model — a graph of operations
+plus the learned numbers, readable by a runtime rather than by PyTorch. We
+export because the demo must run in a web page: the browser downloads one
+.onnx file and runs it with ONNX Runtime, no Python anywhere. Because the
+normalisation lives inside the model, the exported graph is self-contained:
+feed it a [batch, 28, 256] raw window batch, get back 17 scores.
+
+Export is not trusted blindly. `export.verify` runs the original torch model
+and the exported ONNX graph on hundreds of real held-out test windows and
+demands the scores agree to 1e-4 and every prediction matches. The numbers
+are recorded in `artifacts/onnx/parity.json`. A browser demo that silently
+disagreed with the trained model would be worse than no demo.
+
 ## 8. What the baseline found
 
 Accuracy, mean ± standard deviation across splits (17 classes, chance 5.9%):

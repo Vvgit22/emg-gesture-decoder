@@ -44,7 +44,7 @@ REPO = Path(__file__).resolve().parents[2]
 RUNS_DIR = REPO / "artifacts" / "runs"
 RESULTS = REPO / "artifacts" / "results.json"
 
-MODELS = ("lda", "cnn")
+MODELS = ("lda", "cnn", "cnn_w128", "cnn_w64")
 CONFIGS = ("forearm", "wrist", "both")
 KINDS = ("within_subject", "cross_day", "cross_subject")
 
