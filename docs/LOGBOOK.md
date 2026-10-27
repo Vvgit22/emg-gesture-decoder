@@ -199,3 +199,41 @@ broke. Written as the work happens.
   (`artifacts/onnx/parity.json`). `.meta.json` sidecars written.
 - Figures regenerated for all models × both-configs (confusions, per-class
   F1, grouped accuracy bars, per-subject strip, ablation curve).
+
+## 2026-10-27 — Checkpoint 3: site assets + browser demo bundle
+
+- `site_assets.py`: packed `artifacts/site/` — results.json copy, the five
+  figures, `seen.onnx`/`unseen.onnx` (+meta), `demo.bin`, `demo.json`.
+- Held-out verified, not assumed: subject 1 ∈ fold3 test ✓; s01_d1 test
+  trials = {6,7} ✓ — so trial 6 is unseen by BOTH models.
+- `demo.bin`: 17×28×2048 int16 = **1,949,696 bytes** exactly; stitched
+  from the trial's 35 overlapping windows after asserting every
+  consecutive overlap is bit-identical (all 544 channel-overlaps passed).
+  Centre crop [1280:3328]. One global scale = max|x|/32000.
+- Demo-clip scoring (255 windows: 17 gestures × 15 non-overlapping
+  256-sample windows): **seen 89.0%** (its own split test: 85.6%),
+  **unseen 88.6%** (split: 81.5%); **quantisation agreement 1.000** —
+  int16 never changed a single argmax. `first_15_argmax_*` lists stored in
+  demo.json for the browser↔Python parity check.
+- `report.py` (`make readme`): README results table regenerated between
+  markers from results.json; Browser-demo section added.
+- tests: `test_site_assets.py` — stitch recovers trace, stitch fires on
+  corrupted overlap, int16 round-trip ≤ half a scale step, byte-size
+  formula. `uv run pytest`: 38 passed; ruff clean.
+- `scripts/thumbnail.py`: renders the portfolio thumbnail from demo.bin
+  (8 real traces, plasma palette, lit 17-cell grid).
+- Portfolio side (separate repo): `emg:sync` script copies site/ +
+  onnxruntime-web 1.30.0 jsep wasm into `public/emg/` (~3.0 MB ours,
+  27 MB wasm runtime); `/emg/` demo page streams int16 clips and runs both
+  ONNX models in-browser. Bugs found in verification and fixed:
+  - ORT 1.30 requests the *jsep* wasm build, not the plain one — the
+    non-jsep pair was deleted again (42→27 MB).
+  - Fractional playback positions indexed the int16 array with floats →
+    `undefined` → NaN logits for early windows (only the pos=2048
+    inference was integer). Windows now anchored to the fixed 128-grid.
+  - Serialised inferences on a promise queue (wasm sessions are not
+    re-entrant).
+  - Lighthouse pass: split lazy loading into data-on-scroll vs
+    models-on-Play — result **99 / 100 / 100 / 100**.
+- Browser↔Python parity: first-15-window argmax lists identical for both
+  models (15/15).
