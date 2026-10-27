@@ -237,3 +237,8 @@ broke. Written as the work happens.
     models-on-Play — result **99 / 100 / 100 / 100**.
 - Browser↔Python parity: first-15-window argmax lists identical for both
   models (15/15).
+- Subject-1 observation (requested note): demo-clip accuracies were
+  89.0% (seen) / 88.6% (unseen) vs full split-test accuracies 85.6% /
+  81.5% — subject 1 was chosen as the demo person BEFORE any model was
+  trained and was not re-selected; on this one person the two models
+  happen to land close together.
