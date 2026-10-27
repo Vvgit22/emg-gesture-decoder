@@ -61,7 +61,8 @@ from torch import nn
 from emgdec import metrics, splits
 from emgdec.baselines import _load_meta
 from emgdec.config import N_GESTURES, SEED
-from emgdec.evaluate import RUNS_DIR, RunRecord, save_run
+from emgdec.evaluate import RUNS_DIR, RunRecord, exp_runs, save_run
+from emgdec.provenance import collect as prov_collect, sha256_file
 from emgdec.models import CHANNELS, TinyCNN, n_params
 
 REPO = Path(__file__).resolve().parents[2]
@@ -144,8 +145,8 @@ def fit(model: nn.Module, Xtr: np.ndarray, ytr: np.ndarray,
     Returns (best_state_dict, best_val_accuracy, epochs_run). With no
     validation set, runs all epochs and returns the final weights.
     """
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+    # Caller seeds globally before model init; we seed only the shuffle
+    # generator here so both paths end up deterministic.
     gen = torch.Generator().manual_seed(seed)
     opt = torch.optim.AdamW(model.parameters(), lr=lr,
                             weight_decay=weight_decay)
@@ -210,6 +211,10 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
     yva = meta["gesture"][np.sort(np.asarray(split.val))].astype(int) - 1
     yte = meta["gesture"][np.sort(np.asarray(split.test))].astype(int) - 1
 
+    # Seed BEFORE the model exists, so init order is identical whether a
+    # split runs alone or after another (resume-order independence).
+    torch.manual_seed(seed + fold_index)
+    np.random.seed(seed + fold_index)
     model = TinyCNN(len(chans), N_GESTURES)
     # Per-channel stats over TRAIN windows only; clamped inside the model.
     tr32 = Xtr.astype(np.float32)
@@ -234,17 +239,23 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
                   torch=torch.__version__)
     if save_weights is None:
         save_weights = _should_save_pt(split.kind, config) and crop == 256
+    prov = prov_collect(
+        seed=seed + fold_index, opt=params, device=str(device), split=split,
+        extra={"selected_epoch": epochs_run,
+               "selection_rule": f"max val accuracy, patience {patience}"})
     if save_weights:
         p = (MODELS_DIR / name / config / split.kind / f"{split.name}.pt")
         p.parent.mkdir(parents=True, exist_ok=True)
         torch.save(model.state_dict(), p)
+        prov["checkpoint_sha256"] = sha256_file(p)
     return RunRecord(
         model=name, config=config, kind=split.kind, name=split.name,
         confusion=cm.tolist(),
         n_train=len(split.train), n_val=len(split.val),
         n_test=len(split.test), train_seconds=train_seconds,
         seed=seed + fold_index, params=params,
-        val_accuracy=best_val, epochs_run=epochs_run)
+        val_accuracy=best_val, epochs_run=epochs_run,
+        provenance=prov)
 
 
 def _open_X() -> tuple[np.memmap, dict]:
@@ -257,27 +268,70 @@ def _run_path(model: str, config: str, kind: str, name: str) -> Path:
     return RUNS_DIR / model / config / kind / f"{name}.json"
 
 
+def _prov_matches(rec_path: Path, split) -> tuple[bool, str]:
+    # A finished record counts for resume only if git commit, preprocessing
+    # config and split fingerprint match what this code would produce now.
+    try:
+        d = json.loads(rec_path.read_text())
+        prov = d.get("provenance") or {}
+        if not prov:
+            return False, "no provenance"
+        cur = prov_collect(seed=0, opt={}, device="-", split=split)
+        if prov.get("git_commit") != cur["git_commit"]:
+            return False, "git commit differs"
+        if prov.get("preprocessing") != cur["preprocessing"]:
+            return False, "preprocessing config differs"
+        if prov.get("split_fingerprint") != cur["split_fingerprint"]:
+            return False, "split fingerprint differs"
+        if d.get("status") != "finished":
+            return False, "status is not finished"
+        return True, ""
+    except Exception as e:
+        return False, f"unreadable record: {e}"
+
+
 def run(kind: str, config: str, *, crop: int = 256,
         device: str | None = None, max_epochs: int | None = None,
         patience: int | None = None, limit: int | None = None,
-        force: bool = False) -> int:
+        force: bool = False, experiment: str = "dev",
+        mode: str = "fresh") -> int:
+    if mode == "report":
+        from emgdec.evaluate import main as eval_main
+        eval_main(["--experiment", experiment])
+        return 0
     meta = _load_meta()
     X, _ = _open_X()
+    runs_dir = exp_runs(experiment)
     model = "cnn" if crop == 256 else f"cnn_w{crop}"
     kinds = list(splits.ALL) if kind == "all" else [kind]
     configs = list(CHANNELS) if config == "all" else [config]
     n = 0
     for k in kinds:
         for cfg in configs:
+            existing = runs_dir / model / cfg / k
+            if (mode == "fresh" and not force and existing.exists()
+                    and any(existing.glob("*.json"))):
+                raise SystemExit(
+                    f"fresh mode: {existing} already has runs; "
+                    "use --mode resume or --force")
             for i, split in enumerate(splits.make(k, meta)):
                 if limit is not None and i >= limit:
                     break
-                if not force and _run_path(model, cfg, k, split.name).exists():
+                rec_path = runs_dir / model / cfg / k / f"{split.name}.json"
+                if rec_path.exists() and not force:
+                    if mode == "fresh":
+                        raise SystemExit(
+                            f"fresh mode: {rec_path} exists; "
+                            "use --mode resume or --force")
+                    ok, why = _prov_matches(rec_path, split)
+                    if not ok:
+                        raise SystemExit(
+                            f"resume mode: {split.name} mismatch: {why}")
                     continue
                 rec = train_split(X, meta, split, cfg, crop=crop,
                                   device=device, max_epochs=max_epochs,
                                   patience=patience, fold_index=i)
-                save_run(rec, RUNS_DIR)
+                save_run(rec, runs_dir)
                 n += 1
                 acc = metrics.accuracy(np.asarray(rec.confusion))
                 print(f"{model}/{cfg}/{k}/{split.name}: "
@@ -285,6 +339,7 @@ def run(kind: str, config: str, *, crop: int = 256,
                       f"test={acc:.3f} {rec.train_seconds:.0f}s", flush=True)
         peak_gb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e9
         print(f"{k}: peak RSS {peak_gb:.1f} GB", flush=True)
+    return n
     return n
 
 
@@ -301,10 +356,14 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--patience", type=int, default=None)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--experiment", default="dev")
+    ap.add_argument("--mode", choices=["fresh", "resume", "report"],
+                    default="fresh")
     a = ap.parse_args(argv)
     n = run(a.kind, a.config, crop=a.crop, device=a.device,
             max_epochs=a.max_epochs, patience=a.patience,
-            limit=a.limit, force=a.force)
+            limit=a.limit, force=a.force, experiment=a.experiment,
+            mode=a.mode)
     print(f"done: {n} runs")
 
 

@@ -8,11 +8,14 @@ verify:
 
 # Builds the windowed dataset (memmap X + meta.parquet); pass SUBJECTS="1,2" for a quick subset
 windows:
-	uv run python -m emgdec.windows --subjects $(SUBJECTS)
+	uv run python -m emgdec.windows $(if $(SUBJECTS),--subjects $(SUBJECTS))
 
 # Runs the test suite
 test:
 	uv run pytest
+
+# Lint + tests, the same as CI
+check: lint test
 
 # Lints the source and tests
 lint:
@@ -26,9 +29,9 @@ features:
 baselines:
 	uv run python -m emgdec.baselines --kind all --config all
 
-# Aggregates artifacts/runs/**/*.json into artifacts/results.json and prints the table
+# Aggregates $(EXP) run JSONs into its results.json and prints the table
 evaluate:
-	uv run python -m emgdec.evaluate
+	uv run python -m emgdec.evaluate --experiment $(EXP)
 
 # Draws the five result figures (SVG) from artifacts/results.json
 figures:
@@ -37,29 +40,44 @@ figures:
 # End-to-end replay of checkpoint 1C: features -> baselines -> evaluate -> figures
 reproduce: features baselines train evaluate figures
 
+# Experiment dir used by training/evaluate targets; a NEW id by default so
+# committed JSONs can never cause silent skipping
+EXP ?= repro_$(shell date +%Y%m%d)
+
 # Trains the CNN on within_subject + cross_day for all channel configs (resumable)
 train:
-	uv run python -m emgdec.train --kind within_subject --config all
-	uv run python -m emgdec.train --kind cross_day --config all
+	uv run python -m emgdec.train --kind within_subject --config all --experiment $(EXP) --mode resume
+	uv run python -m emgdec.train --kind cross_day --config all --experiment $(EXP) --mode resume
 
 # Trains the CNN on cross_subject for all configs — the long pole, hours
 train-cross-subject:
-	uv run python -m emgdec.train --kind cross_subject --config all
+	uv run python -m emgdec.train --kind cross_subject --config all --experiment $(EXP) --mode resume
 
 # Window-length ablation: centre-crops of 125 ms and 62.5 ms, both config
 ablation:
-	uv run python -m emgdec.train --kind cross_day --config both --crop 128
-	uv run python -m emgdec.train --kind cross_day --config both --crop 64
-	uv run python -m emgdec.train --kind cross_subject --config both --crop 128
-	uv run python -m emgdec.train --kind cross_subject --config both --crop 64
+	uv run python -m emgdec.train --kind cross_day --config both --crop 128 --experiment $(EXP) --mode resume
+	uv run python -m emgdec.train --kind cross_day --config both --crop 64 --experiment $(EXP) --mode resume
+	uv run python -m emgdec.train --kind cross_subject --config both --crop 128 --experiment $(EXP) --mode resume
+	uv run python -m emgdec.train --kind cross_subject --config both --crop 64 --experiment $(EXP) --mode resume
 
 # Full pipeline from features through CNNs to figures (hours; sweeps are resumable)
 reproduce-full: reproduce train train-cross-subject ablation evaluate figures
 
 # Packs artifacts/site/ (demo.bin, demo.json, the two ONNX models, figures)
-site:
+site: export
 	uv run python -m emgdec.site_assets
 
 # Rewrites the README results table from artifacts/results.json
 readme:
 	uv run python -m emgdec.report
+
+# Tiny smoke run: 2 within-subject splits, both config, CPU-safe
+smoke:
+	uv run python -m emgdec.train --kind within_subject --config both --limit 2 --experiment smoke --mode resume --device cpu
+
+# Diffs the mirror's SHA256SUMS.txt against PhysioNet's (mirror trusted for bytes only)
+verify-manifest:
+	curl -fsSL https://physionet.org/files/grabmyo/1.1.0/SHA256SUMS.txt -o /tmp/SHA256SUMS.physionet && diff -q /tmp/SHA256SUMS.physionet data/raw/SHA256SUMS.txt && echo "manifests identical"
+
+# Lint + tests, same as CI
+check: lint test
