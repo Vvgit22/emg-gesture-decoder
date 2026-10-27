@@ -130,6 +130,11 @@ def cross_subject(meta: Meta, n_folds: int = N_FOLDS_CROSS_SUBJECT, seed: int = 
     cards, so fold membership is reproducible and balanced (±1 subject).
     Within each fold, N_VAL_SUBJECTS of the training subjects are held out
     whole as validation.
+
+    protocol="v1" (frozen): validation subjects are always the first four of
+    the shuffled pool — the fixed-val-subject defect kept in the historical
+    benchmark. protocol="v2" draws them per fold, seeded per fold, with no
+    subject validating in more than one fold.
     """
     _require(meta)
     subj = meta["subject"]
@@ -148,7 +153,7 @@ def cross_subject(meta: Meta, n_folds: int = N_FOLDS_CROSS_SUBJECT, seed: int = 
             # first four of the pool — the fixed-val-subject defect).
             while True:
                 r = np.random.default_rng(seed + 1000 + k)
-                cand = list(r.choice(pool, size=N_VAL_SUBJECTS, replace=False))
+                cand = list(r.choice(pool, size=min(N_VAL_SUBJECTS, len(pool)), replace=False))
                 if not any(c in v for v in used_val for c in cand):
                     break
             used_val.append(set(cand))

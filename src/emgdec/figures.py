@@ -28,8 +28,9 @@ matplotlib.use("Agg")  # no screen needed; deterministic SVG output
 import matplotlib.pyplot as plt
 import numpy as np
 
-REPO = Path(__file__).resolve().parents[2]
 from emgdec.evaluate import exp_results
+
+REPO = Path(__file__).resolve().parents[2]
 RESULTS = exp_results("protocol_v1")
 FIG_DIR = REPO / "artifacts" / "figures"
 
