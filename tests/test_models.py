@@ -107,3 +107,17 @@ def test_train_split_deterministic_and_order_independent():
     r3 = T.train_split(X, meta, sp[0], "both", device="cpu", max_epochs=2,
                        patience=1, save_weights=False)
     assert r1.confusion == r3.confusion
+
+
+def test_trial_majority_vote_groups_full_key():
+    """Two trials of 35 windows, 20 correct each -> 100% trial-level.
+    Catches pooling by trial number alone (the 20.6% bug)."""
+    from emgdec.report_participants import _trial_accuracy
+    parts = {1: []}
+    for trial, wrong in ((6, [1] * 15), (7, [2] * 15)):
+        y = np.full(35, 3)
+        p = np.full(35, 3)
+        p[:15] = wrong  # 15/35 wrong -> majority still 3
+        parts[1].append((y, p, np.full(35, trial), np.arange(35),
+                         np.ones(35, int), np.full(35, 4)))
+    assert _trial_accuracy(parts) == 1.0
