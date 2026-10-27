@@ -354,3 +354,24 @@ Newest entries at the bottom; do not rewrite history — append.
   wasm through Vite (public/ keeps it out of the JS graph entirely).
 - **What would change:** an ORT version bump changes which wasm filenames
   to copy — the sync script is the single place that lists them.
+
+## 2026-10-27 — Perturbation grid (eval-only, predefined)
+
+- **Grid:** channel dropout k∈{1,2,4,8} (3 seeded draws averaged);
+  per-channel gain ×U(0.8,1.25) and ×U(0.5,2.0); AWGN at 20/10/0 dB SNR
+  relative to each window's RMS. cnn/both/cross_subject checkpoints.
+- **Reason:** cheap controlled sensitivity read. Label everywhere:
+  controlled synthetic diagnostics, NOT evidence of real electrode
+  re-donning robustness.
+- **Alternative rejected:** leave-one-channel-out 28-way map (costly,
+  similar information); real re-donning data (does not exist here).
+
+## 2026-10-27 — Analyses read frozen v1 outputs, nothing recomputed
+
+- **Decision:** protocol_v1_analysis reads committed run JSONs + saved
+  .pt + the v1 memmap only; every dump asserts its reconstructed
+  confusion equals the committed record before writing.
+- **Reason:** v1 run files are the frozen benchmark; analyses derive from
+  them, never silently reproduce them. LDA val predictions needed a
+  deterministic re-fit (same code path as v1, asserted equal confusion).
+- **What would change:** a protocol_v2 retrain supersedes all of this.
