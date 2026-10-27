@@ -1,0 +1,14 @@
+{
+ "cnn_both_within_subject_s01_d1": {
+  "max_logit_diff": 4.76837158203125e-06,
+  "argmax_agreement": 1.0,
+  "n_windows": 512,
+  "ok": true
+ },
+ "cnn_both_cross_subject_fold3": {
+  "max_logit_diff": 9.5367431640625e-06,
+  "argmax_agreement": 1.0,
+  "n_windows": 512,
+  "ok": true
+ }
+}

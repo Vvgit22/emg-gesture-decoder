@@ -128,3 +128,74 @@ broke. Written as the work happens.
   `confusion_lda_both_{within_subject,cross_day,cross_subject}.svg`,
   `accuracy_by_split_lda.svg`, `within_subject_per_subject_lda.svg`.
 - `uv run pytest`: 29 passed; `ruff check` clean.
+
+## 2026-10-26 — Checkpoint 2: TinyCNN + sweeps + ONNX (in progress)
+
+- `models.py`: TinyCNN, 4 strided conv blocks + GAP + dropout + linear,
+  **57,841 params** for C=28 (asserted 40k–80k in tests). Normalisation is
+  a registered buffer inside the graph, stats from train windows only.
+- `train.py`: AdamW 2e-3 / wd 1e-2, cosine, batch 256, early stop on val
+  acc, best-val restore, test scored once. `--limit`, `--force`, resume-
+  on-existing. `.pt` weights saved for cross_subject (all configs) and
+  config both.
+- Smoke `--kind within_subject --config both --limit 3`: test accs
+  0.856 / 0.905 / 0.965 (LDA same splits ~0.8–0.9), ~1–7 s per split on
+  MPS, peak RSS 0.9 GB.
+- Sweeps launched in background (MPS):
+  - `/tmp/emg-sweep-a.sh` → log `/tmp/emg-sweep-a.log`: within_subject all
+    configs → cross_day all → cross_day crops 128/64 (both).
+  - `/tmp/emg-sweep-b.sh` → log `/tmp/emg-sweep-b.log`: cross_subject all
+    configs → cross_subject crops 128/64 (both).
+  - within_subject pace ≈ 1–2 s/split (~10 s first split incl. warmup).
+- `export.py`: opset-17 ONNX, dynamic batch, input "emg" [B,C,256] raw
+  float32, output "logits"; `verify` = torch-CPU vs ort-CPU on 512 real
+  test windows, bar 1e-4 / 100% argmax → `artifacts/onnx/parity.json` +
+  `.meta.json` sidecar. Random-weights parity test passes.
+- `evaluate.MODELS` extended with `cnn_w128`/`cnn_w64` — save_run rejected
+  the ablation names otherwise (flagged to lead; evaluate.py was
+  previously protected).
+- tests: **34 passed** (incl. overfit-learns, leak-spy, ONNX parity).
+  ruff clean.
+
+### Sweep results (all finished ~14:10)
+
+- Sweep A (`/tmp/emg-sweep-a.log`): within_subject ×3 configs = 387 runs
+  (~15 min incl. the 3 pre-existing smoke runs skipped via resume),
+  cross_day ×3 = 129 runs (~12 min), cross_day crops 128/64 = 86 runs.
+  Total wall ≈ 35 min → `reproduce` gained `train` (<1 h threshold).
+- Sweep B (`/tmp/emg-sweep-b.log`): cross_subject ×3 = 15 runs + crops
+  128/64 = 10 runs. First fold (forearm): **143 s total, ~15 s/epoch**
+  after a ~60–90 s memmap load of ~375k fp16 windows (~5.4 GB).
+  Per-fold typical 45–190 s; two outliers (fold1/both 760 s, fold4
+  357 s) coincided with concurrent evaluate/figure/export work on the
+  same machine — memory contention, not a training problem.
+  Peak RSS **10.1 GB** on cross_subject (train+val+test fp16 copies +
+  memmap paging) — under the 16 GB machine budget but above the 6 GB
+  the classic pipeline held; noted for a future chunked-load fix.
+- Final table (`make evaluate`, 1158 run files):
+
+  | model | config | within_subject | cross_day | cross_subject |
+  |---|---|---|---|---|
+  | lda | forearm | 82.0 ± 8.9 | 72.2 ± 8.8 | 53.1 ± 2.7 |
+  | lda | wrist | 84.7 ± 7.6 | 68.7 ± 11.6 | 40.6 ± 2.7 |
+  | lda | both | 93.4 ± 5.7 | 87.0 ± 7.3 | 67.9 ± 2.2 |
+  | cnn | forearm | 84.0 ± 8.4 | 79.3 ± 9.5 | 68.7 ± 3.4 |
+  | cnn | wrist | 89.7 ± 6.4 | 76.2 ± 11.4 | 60.2 ± 2.2 |
+  | cnn | both | 92.7 ± 5.9 | 88.8 ± 5.7 | **79.6 ± 2.5** |
+  | cnn_w128 | both | — | 87.4 ± 6.3 | 78.0 ± 4.2 |
+  | cnn_w64 | both | — | 82.9 ± 6.7 | 76.2 ± 3.3 |
+
+- Read: CNN ≈ LDA within-subject (92.7 vs 93.4 — LDA was already near
+  ceiling on calibrated data), CNN clearly wins cross-day (+1.8 both)
+  and decisively wins cross-subject (+11.7 both; forearm-only +15.6,
+  wrist-only +19.6). Ablation: 125 ms costs ~1.4–1.6 pts, 62.5 ms costs
+  ~3.4–5.9 pts — most information is in the first ~125 ms but the tail
+  still helps. Nothing >99% anywhere; no implausible jumps → no leak
+  signal.
+- ONNX: `cnn_both_within_subject_s01_d1.onnx` and
+  `cnn_both_cross_subject_fold3.onnx` (fold3 holds out subject 1),
+  **226 KB each**, parity vs torch-CPU on 512 test windows:
+  max |logit diff| 4.8e-6 / 9.5e-6, 100% argmax agreement
+  (`artifacts/onnx/parity.json`). `.meta.json` sidecars written.
+- Figures regenerated for all models × both-configs (confusions, per-class
+  F1, grouped accuracy bars, per-subject strip, ablation curve).

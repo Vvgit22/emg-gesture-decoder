@@ -35,7 +35,7 @@ figures:
 	uv run python -m emgdec.figures
 
 # End-to-end replay of checkpoint 1C: features -> baselines -> evaluate -> figures
-reproduce: features baselines evaluate figures
+reproduce: features baselines train evaluate figures
 
 # Trains the CNN on within_subject + cross_day for all channel configs (resumable)
 train:
