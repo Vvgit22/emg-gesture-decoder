@@ -375,3 +375,16 @@ Newest entries at the bottom; do not rewrite history — append.
   them, never silently reproduce them. LDA val predictions needed a
   deterministic re-fit (same code path as v1, asserted equal confusion).
 - **What would change:** a protocol_v2 retrain supersedes all of this.
+
+## 2026-10-27 — offline_v1b is the matched control, not protocol_v1
+
+- **Decision:** the seed study and the causal comparison are read
+  against `offline_v1b` (new code, v1 splits, offline memmap), never
+  against the frozen `protocol_v1` numbers.
+- **Reason:** protocol_v1 records were produced by pre-fix code (seed
+  after init, double-copy loader). At ~1e-7 stats equivalence the new
+  pipeline gives slightly different weights, so an old-vs-new
+  comparison confounds code change with intervention. offline_v1b
+  isolates the intervention.
+- **Alternative rejected:** re-using v1 fold accuracies as the
+  causal baseline — invalid for the same reason.
