@@ -193,7 +193,8 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
                 seed: int = SEED, fold_index: int = 0,
                 batch: int = HYPER["batch"], lr: float = HYPER["lr"],
                 weight_decay: float = HYPER["weight_decay"],
-                save_weights: bool | None = None) -> RunRecord:
+                save_weights: bool | None = None,
+                x_dir: Path | None = None) -> RunRecord:
     """Train one split, return (and save) the RunRecord; test scored once."""
     splits.assert_no_leak(split, meta)
     if device is None:
@@ -234,6 +235,7 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
 
     cm = _confusion(model, Xte, yte, device)
     name = "cnn" if crop == 256 else f"cnn_w{crop}"
+    split_name = split.name + (f"_seed{seed_offset}" if seed_offset else "")
     params = dict(HYPER, crop=crop, max_epochs=max_epochs, patience=patience,
                   device=str(device), n_params=n_params(model),
                   torch=torch.__version__)
@@ -242,14 +244,18 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
     prov = prov_collect(
         seed=seed + 10000 * seed_offset + fold_index, opt=params, device=str(device), split=split,
         extra={"selected_epoch": epochs_run,
-               "selection_rule": f"max val accuracy, patience {patience}"})
+               "selection_rule": f"max val accuracy, patience {patience}",
+               "preprocessing_mode": (json.loads(
+                   (Path(x_dir) / "shape.json").read_text()
+               ).get("preprocess", "offline") if x_dir else "offline"),
+               "x_dir": str(x_dir) if x_dir else str(MEMMAP_DIR)})
     if save_weights:
-        p = (MODELS_DIR / name / config / split.kind / f"{split.name}.pt")
+        p = (MODELS_DIR / name / config / split.kind / f"{split_name}.pt")
         p.parent.mkdir(parents=True, exist_ok=True)
         torch.save(model.state_dict(), p)
         prov["checkpoint_sha256"] = sha256_file(p)
     return RunRecord(
-        model=name, config=config, kind=split.kind, name=split.name,
+        model=name, config=config, kind=split.kind, name=split_name,
         confusion=cm.tolist(),
         n_train=len(split.train), n_val=len(split.val),
         n_test=len(split.test), train_seconds=train_seconds,
@@ -258,9 +264,9 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
         provenance=prov)
 
 
-def _open_X() -> tuple[np.memmap, dict]:
-    shape = json.loads((MEMMAP_DIR / "shape.json").read_text())
-    return np.memmap(X_F16, dtype=np.float16, mode="r",
+def _open_X(x_dir: Path = MEMMAP_DIR) -> tuple[np.memmap, dict]:
+    shape = json.loads((Path(x_dir) / "shape.json").read_text())
+    return np.memmap(Path(x_dir) / "X.f16", dtype=np.float16, mode="r",
                      shape=(shape["N"], shape["C"], shape["W"])), shape
 
 
@@ -268,7 +274,7 @@ def _run_path(model: str, config: str, kind: str, name: str) -> Path:
     return RUNS_DIR / model / config / kind / f"{name}.json"
 
 
-def _prov_matches(rec_path: Path, split) -> tuple[bool, str]:
+def _prov_matches(rec_path: Path, split, seed: int | None = None) -> tuple[bool, str]:
     # A finished record counts for resume only if git commit, preprocessing
     # config and split fingerprint match what this code would produce now.
     try:
@@ -276,13 +282,15 @@ def _prov_matches(rec_path: Path, split) -> tuple[bool, str]:
         prov = d.get("provenance") or {}
         if not prov:
             return False, "no provenance"
-        cur = prov_collect(seed=0, opt={}, device="-", split=split)
+        cur = prov_collect(seed=seed or 0, opt={}, device="-", split=split)
         if prov.get("git_commit") != cur["git_commit"]:
             return False, "git commit differs"
         if prov.get("preprocessing") != cur["preprocessing"]:
             return False, "preprocessing config differs"
         if prov.get("split_fingerprint") != cur["split_fingerprint"]:
             return False, "split fingerprint differs"
+        if prov.get("seed") != cur.get("seed"):
+            return False, "training seed differs"
         if d.get("status") != "finished":
             return False, "status is not finished"
         return True, ""
@@ -295,13 +303,13 @@ def run(kind: str, config: str, *, crop: int = 256,
         patience: int | None = None, limit: int | None = None,
         force: bool = False, experiment: str = "dev",
         mode: str = "fresh", seed_offset: int = 0,
-        protocol: str = "v1") -> int:
+        protocol: str = "v1", x_dir: Path = MEMMAP_DIR) -> int:
     if mode == "report":
         from emgdec.evaluate import main as eval_main
         eval_main(["--experiment", experiment])
         return 0
     meta = _load_meta()
-    X, _ = _open_X()
+    X, shape = _open_X(x_dir)
     runs_dir = exp_runs(experiment)
     model = "cnn" if crop == 256 else f"cnn_w{crop}"
     kinds = list(splits.ALL) if kind == "all" else [kind]
@@ -320,13 +328,17 @@ def run(kind: str, config: str, *, crop: int = 256,
             for i, split in enumerate(splits.make(k, meta, protocol)):
                 if limit is not None and i >= limit:
                     break
-                rec_path = runs_dir / model / cfg / k / f"{split.name}.json"
+                rec_name = split.name + \
+                    (f"_seed{seed_offset}" if seed_offset else "")
+                rec_path = runs_dir / model / cfg / k / f"{rec_name}.json"
                 if rec_path.exists() and not force:
                     if mode == "fresh":
                         raise SystemExit(
                             f"fresh mode: {rec_path} exists; "
                             "use --mode resume or --force")
-                    ok, why = _prov_matches(rec_path, split)
+                    ok, why = _prov_matches(
+                        rec_path, split,
+                        seed=SEED + 10000 * seed_offset + i)
                     if not ok:
                         raise SystemExit(
                             f"resume mode: {split.name} mismatch: {why}")
@@ -334,7 +346,7 @@ def run(kind: str, config: str, *, crop: int = 256,
                 rec = train_split(X, meta, split, cfg, crop=crop,
                                   device=device, max_epochs=max_epochs,
                                   patience=patience, fold_index=i,
-                                  seed_offset=seed_offset)
+                                  seed_offset=seed_offset, x_dir=x_dir)
                 save_run(rec, runs_dir)
                 n += 1
                 acc = metrics.accuracy(np.asarray(rec.confusion))
@@ -368,14 +380,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--x", default=None,
                     help="override window memmap dir (e.g. data/memmap_causal)")
     a = ap.parse_args(argv)
-    if a.x:
-        import emgdec.train as _t
-        _t.MEMMAP_DIR = Path(a.x)
-        _t.X_F16 = Path(a.x) / "X.f16"
     n = run(a.kind, a.config, crop=a.crop, device=a.device,
             max_epochs=a.max_epochs, patience=a.patience,
             limit=a.limit, force=a.force, experiment=a.experiment,
-            mode=a.mode, seed_offset=a.seed_offset, protocol=a.protocol)
+            mode=a.mode, seed_offset=a.seed_offset, protocol=a.protocol,
+            x_dir=Path(a.x) if a.x else MEMMAP_DIR)
     print(f"done: {n} runs")
 
 

@@ -75,7 +75,8 @@ def main() -> None:
 
         def acc(xx):
             with torch.no_grad():
-                pr = net(torch.from_numpy(xx)).argmax(1).numpy()
+                pr = net(torch.from_numpy(
+                    xx.astype(np.float32))).argmax(1).numpy()
             return float((pr == y).mean())
 
         res = {"clean": acc(x)}
