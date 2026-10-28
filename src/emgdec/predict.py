@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 from emgdec import metrics, splits
-from emgdec.baselines import CONFIG_COLS, _load_meta
+from emgdec.baselines import _load_meta
 from emgdec.config import N_GESTURES
 from emgdec.evaluate import exp_runs
 from emgdec.models import CHANNELS, TinyCNN
@@ -65,7 +65,8 @@ def main() -> None:
     n = 0
     for pt in sorted(MODELS_DIR.rglob("*.pt")):
         rel = pt.relative_to(MODELS_DIR).with_suffix("")
-        model, config, kind, name = rel.parts[0], rel.parts[1], rel.parts[2], rel.parts[3]
+        model, config = rel.parts[0], rel.parts[1]
+        kind, name = rel.parts[2], rel.parts[3]
         committed = json.loads(
             (exp_runs("protocol_v1") / model / config / kind
              / f"{name}.json").read_text())
@@ -86,11 +87,10 @@ def dump_lda() -> int:
     """Re-fit v1 LDA (both, all kinds) and dump predict_proba; the v1
     commits are reproduced by construction (same seeds, deterministic
     solver) — asserted per split before writing."""
-    import pyarrow.parquet as pq
     from sklearn.discriminant_analysis import (
         LinearDiscriminantAnalysis)
     from emgdec.features import FEATURES_F32, MEMMAP_DIR, N_FEATURES
-    from emgdec.config import N_CHANNELS, SEED
+    from emgdec.config import N_CHANNELS
 
     meta = _load_meta()
     shape = json.loads((MEMMAP_DIR / "shape.json").read_text())
@@ -106,7 +106,9 @@ def dump_lda() -> int:
                  / f"{split.name}.json").read_text())
             Xtr = np.asarray(F[np.asarray(split.train)][:, cols],
                              dtype=np.float32)
-            mu, sd = Xtr.mean(0), Xtr.std(0); sd[sd == 0] = 1
+            mu = Xtr.mean(0)
+            sd = Xtr.std(0)
+            sd[sd == 0] = 1
             clf = LinearDiscriminantAnalysis(solver="lsqr",
                                              shrinkage="auto")
             clf.fit((Xtr - mu) / sd, meta["gesture"][split.train] - 1)

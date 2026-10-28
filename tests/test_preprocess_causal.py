@@ -28,7 +28,8 @@ def test_causality_future_independent():
     x = _signal()
     p = CausalPreprocessor()
     a = p.process(x[:2000])
-    x2 = x.copy(); x2[1500:] *= 10
+    x2 = x.copy()
+    x2[1500:] *= 10
     p2 = CausalPreprocessor()
     b = p2.process(x2[:1000])
     np.testing.assert_array_equal(a[:500], b[:500])
