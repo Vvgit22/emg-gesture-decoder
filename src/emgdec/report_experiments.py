@@ -55,7 +55,9 @@ def main() -> None:
                         notes.append(
                             f"per-seed: {per}; across-seed SD "
                             f"{100*c['seed_std']:.2f}")
-                    ps = _participants(EXP / exp)
+                    ps = (_participants(EXP / exp)
+                          if (model == "cnn" and kind == "cross_subject")
+                          else None)
                     if ps:
                         notes.append(
                             f"participant mean {100*ps['mean']:.1f}, SD "

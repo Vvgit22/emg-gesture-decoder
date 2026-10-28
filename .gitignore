@@ -17,5 +17,16 @@ artifacts/runs/**/*.log
 artifacts/models/
 artifacts/onnx/
 artifacts/experiments/*/predictions/
+!artifacts/experiments/protocol_v1_analysis/predictions/
+artifacts/experiments/protocol_v1_analysis/predictions/*
+!artifacts/experiments/protocol_v1_analysis/predictions/README.md
+!artifacts/experiments/protocol_v1_analysis/predictions/cnn/
+!artifacts/experiments/protocol_v1_analysis/predictions/lda/
+artifacts/experiments/protocol_v1_analysis/predictions/cnn/*
+artifacts/experiments/protocol_v1_analysis/predictions/lda/*
+!artifacts/experiments/protocol_v1_analysis/predictions/cnn/both/
+!artifacts/experiments/protocol_v1_analysis/predictions/lda/both/
+artifacts/experiments/protocol_v1_analysis/predictions/cnn/both/*
+artifacts/experiments/protocol_v1_analysis/predictions/lda/both/*
 !artifacts/experiments/protocol_v1_analysis/predictions/cnn/both/cross_subject/
 !artifacts/experiments/protocol_v1_analysis/predictions/lda/both/cross_subject/
