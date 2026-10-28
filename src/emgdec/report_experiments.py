@@ -87,6 +87,50 @@ def main() -> None:
                      f"offline seed0 {100*_seed0(ob):.1f}%")
     except Exception as e:
         lines.append(f"\n(paired causal/offline comparison skipped: {e})")
+    # machine-readable extras for the website's robustness table
+    try:
+        a = json.loads((EXP/"causal_v1"/"results.json").read_text())
+        b = json.loads((EXP/"offline_v1b"/"results.json").read_text())
+        pf = [(rc["acc"], ro["acc"]) for rc, ro in
+              zip(_folds("causal_v1"), _folds("offline_v1b"))]
+        ds = [c - o for c, o in pf]
+        summary["comparisons"] = {"causal_vs_offline": {
+            "per_fold": [{"causal": c, "offline": o, "delta": c - o}
+                         for c, o in pf],
+            "mean_delta": float(np.mean(ds)),
+            "sd_delta": float(np.std(ds, ddof=1))}}
+    except Exception:
+        pass
+    for exp in exps:
+        p = EXP / exp / "participants.json"
+        if p.exists():
+            summ = (json.loads(p.read_text())["kinds"]["cross_subject"]
+                    ["cnn"]["summary"])
+            summary["experiments"][exp]["participants"] = summ
+    cal = EXP / "protocol_v1_analysis" / "calibration.json"
+    if cal.exists():
+        d = json.loads(cal.read_text())["models"]["cross_subject"]
+        raw_ece = [c["raw"]["ece"] for c in d.values()]
+        cal_ece = [c["calibrated"]["ece"] for c in d.values()]
+        summary["calibration"] = {
+            "ece_raw_min": min(raw_ece), "ece_raw_max": max(raw_ece),
+            "ece_cal_min": min(cal_ece), "ece_cal_max": max(cal_ece)}
+    per = EXP / "protocol_v1_analysis" / "perturbations.json"
+    if per.exists():
+        d = json.loads(per.read_text())["folds"]
+        keys = list(d["fold0"])
+        summary["perturbations"] = {
+            k: float(np.mean([f[k] for f in d.values()])) for k in keys}
+    for exp in exps:
+        res = json.loads((EXP / exp / "results.json").read_text())
+        for model, cfgs in (res.get("cells") or {}).items():
+            for config, kinds in cfgs.items():
+                for kind, c in kinds.items():
+                    if "seeds" in c:
+                        summary["experiments"][exp]["cells"][model][
+                            config][kind]["per_seed"] = [
+                            {"seed": s, "accuracy_mean": v["accuracy_mean"]}
+                            for s, v in c["seeds"].items()]
     (EXP / "SUMMARY.md").write_text("\n".join(lines))
     (EXP / "summary.json").write_text(json.dumps(summary, indent=1))
     print("\n".join(lines))

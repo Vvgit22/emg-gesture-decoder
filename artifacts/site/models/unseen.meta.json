@@ -70,6 +70,5 @@
   "argmax_agreement": 1.0,
   "n_windows": 512,
   "ok": true
- },
- "temperature": 1.991
+ }
 }
