@@ -49,13 +49,15 @@ import numpy as np
 from emgdec import splits
 from emgdec.baselines import _load_meta
 from emgdec.config import GESTURE_NAMES, N_GESTURES
-from emgdec.evaluate import RUNS_DIR
+from emgdec.evaluate import exp_runs
 from emgdec.models import CHANNELS
 from emgdec.train import _open_X
 
 REPO = Path(__file__).resolve().parents[2]
 SITE = REPO / "artifacts" / "site"
 ONNX_DIR = REPO / "artifacts" / "onnx"
+EXP = "causal_v1"   # the demo ships the causal pair
+X_DIR = REPO / "data" / "memmap_causal"
 FIG_DIR = REPO / "artifacts" / "figures"
 
 DEMO_SUBJECT, DEMO_SESSION, DEMO_TRIAL = 1, 1, 6
@@ -144,32 +146,48 @@ def _demo_metrics() -> dict:
         raw = _raw_windows()
         wins_f = np.stack([raw[g][:, s:s + WIN]
                            for g in range(17) for s in starts])
-        a_q, a_f = _onnx_argmax(sess, wins_q), _onnx_argmax(sess, wins_f)
+        logits_q = sess.run(["logits"],
+                            {"emg": wins_q.astype(np.float32)})[0]
+        a_f = _onnx_argmax(sess, wins_f)
+        a_q = logits_q.argmax(1)
+        T = float(meta["models"][key].get("temperature", 1.0))
+        p_raw = _softmax(logits_q)
+        p_cal = _softmax(logits_q / T)
         out[key] = {
             "accuracy_on_demo_clips": float((a_q == labels).mean()),
             "quantisation_agreement": float((a_q == a_f).mean()),
+            "mean_confidence_raw": float(p_raw.max(1).mean()),
+            "mean_confidence_calibrated": float(p_cal.max(1).mean()),
+            "temperature": T,
+            "argmax_all": a_q.astype(int).tolist(),
+            "calibrated_max_prob": np.round(p_cal.max(1), 4).tolist(),
         }
     return out
+
+
+def _softmax(z):
+    e = np.exp(z - z.max(1, keepdims=True))
+    return e / e.sum(1, keepdims=True)
 
 
 _raw_cache: np.ndarray | None = None
 
 
-def _raw_windows() -> np.ndarray:
+def _raw_windows(x_dir=X_DIR) -> np.ndarray:
     """The original float16 demo segments [17, 28, 2048] (pre-quantise)."""
     global _raw_cache
     if _raw_cache is None:
         meta = _load_meta()
-        X, _ = _open_X()
+        X, _ = _open_X(x_dir)
         _raw_cache = np.stack([_stitch_trial(X, meta, g)
                                for g in range(1, N_GESTURES + 1)])
     return _raw_cache
 
 
-def build() -> dict:
+def build(experiment: str = EXP, x_dir=X_DIR) -> dict:
     meta = _load_meta()
     _check_demo_is_held_out(meta)
-    X, _ = _open_X()
+    X, _ = _open_X(x_dir)
     (SITE / "models").mkdir(parents=True, exist_ok=True)
     (SITE / "figures").mkdir(parents=True, exist_ok=True)
 
@@ -181,10 +199,11 @@ def build() -> dict:
     assert (SITE / "demo.bin").stat().st_size == 17 * 28 * SEG * 2
 
     for key, (kind, name) in (("seen", SEEN), ("unseen", UNSEEN)):
-        onnx = ONNX_DIR / f"cnn_both_{kind}_{name}.onnx"
+        onnx = (ONNX_DIR / experiment
+                / f"cnn_both_{kind}_{name}.onnx")
         mj = json.loads(onnx.with_suffix(".meta.json").read_text())
-        pt = (REPO / "artifacts" / "models" / "cnn" / "both" / kind
-              / f"{name}.pt")
+        pt = (REPO / "artifacts" / "models" / experiment
+              / "cnn" / "both" / kind / f"{name}.pt")
         from emgdec.provenance import sha256_file
         assert mj.get("checkpoint_sha256") == sha256_file(pt), \
             f"{key}: meta checkpoint hash != current .pt"
@@ -194,21 +213,49 @@ def build() -> dict:
         shutil.copy(onnx.with_suffix(".meta.json"),
                     SITE / "models" / f"{key}.meta.json")
 
-    shutil.copy(REPO / "artifacts" / "results.json", SITE / "results.json")
+    # results.json = the frozen historical benchmark table
+    shutil.copy(REPO / "artifacts" / "experiments" / "protocol_v1"
+                / "results.json", SITE / "results.json")
+    sj = REPO / "artifacts" / "experiments" / "summary.json"
+    if sj.exists():
+        shutil.copy(sj, SITE / "summary.json")
     for f in FIGS:
-        shutil.copy(FIG_DIR / f, SITE / "figures" / f)
+        fp = FIG_DIR / f
+        if fp.exists():
+            shutil.copy(fp, SITE / "figures" / f)
 
     starts = np.arange(0, SEG - WIN + 1, STEP)
     run_acc = {}
     for key, (kind, name) in (("seen", SEEN), ("unseen", UNSEEN)):
-        rec = json.loads((RUNS_DIR / "cnn" / "both" / kind
+        rec = json.loads((exp_runs(experiment) / "cnn" / "both" / kind
                           / f"{name}.json").read_text())
         cm = np.asarray(rec["confusion"])
         run_acc[key] = float(np.trace(cm) / cm.sum())
 
+    bench = {}
+    sj = SITE / "summary.json"
+    if sj.exists():
+        summ = json.loads(sj.read_text())
+        bench = {"experiments": {}, "note":
+                 "generated from artifacts/experiments/*/results.json"}
+        for exp, entry in summ.get("experiments", {}).items():
+            for model, cfgs in (entry.get("cells") or {}).items():
+                for config, kinds in cfgs.items():
+                    for kind, c in kinds.items():
+                        bench["experiments"].setdefault(exp, {})[
+                            f"{model}/{config}/{kind}"] = {
+                            "accuracy_mean": c["accuracy_mean"],
+                            "accuracy_std": c["accuracy_std"],
+                            "n_splits": c["n_splits"],
+                            **({"seed_mean": c["seed_mean"],
+                                "seed_std": c["seed_std"]}
+                               if "seeds" in c else {})}
+
     demo_json = {
         "fs": 1024, "n_gestures": 17, "n_channels": 28, "n_samples": SEG,
         "window": WIN, "step": STEP, "scale": scale,
+        "preprocessing": "causal", "experiment": experiment,
+        "benchmark": bench,
         "channels": {"forearm": list(CHANNELS["forearm"]),
                      "wrist": list(CHANNELS["wrist"])},
         "classes": GESTURE_NAMES,
@@ -231,6 +278,19 @@ def build() -> dict:
         sess = ort.InferenceSession(str(SITE / "models" / f"{k}.onnx"),
                                     providers=["CPUExecutionProvider"])
         demo_json[f"first_15_argmax_{k}"] = _onnx_argmax(sess, wins).tolist()
+        demo_json[f"argmax_all_{k}"] = demo_json["models"][k]["argmax_all"]
+        del demo_json["models"][k]["argmax_all"]
+    # presentation sanity: every percentage-like field is a fraction
+    def _check_frac(x, path=""):
+        if isinstance(x, dict):
+            for kk, vv in x.items():
+                _check_frac(vv, f"{path}.{kk}")
+        elif isinstance(x, float) and any(
+                t in path.lower() for t in
+                ("acc", "prob", "confidence", "agreement", "coverage",
+                 "ece", "brier")):
+            assert 0.0 <= x <= 1.0, f"{path} = {x} out of [0,1]"
+    _check_frac(demo_json)
     (SITE / "demo.json").write_text(json.dumps(demo_json, indent=1))
 
     for k in ("seen", "unseen"):
@@ -244,7 +304,12 @@ def build() -> dict:
 
 
 def main() -> None:
-    build()
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--experiment", default=EXP)
+    ap.add_argument("--x", default=None)
+    a = ap.parse_args()
+    build(a.experiment, Path(a.x) if a.x else X_DIR)
 
 
 if __name__ == "__main__":
