@@ -150,7 +150,9 @@ def _demo_metrics() -> dict:
                             {"emg": wins_q.astype(np.float32)})[0]
         a_f = _onnx_argmax(sess, wins_f)
         a_q = logits_q.argmax(1)
-        T = float(meta["models"][key].get("temperature", 1.0))
+        mmeta = json.loads((SITE / "models" / f"{key}.meta.json")
+                           .read_text())
+        T = float(mmeta.get("temperature", 1.0))
         p_raw = _softmax(logits_q)
         p_cal = _softmax(logits_q / T)
         out[key] = {
