@@ -891,9 +891,7 @@
         "n_params": 57841,
         "torch": "2.8.0"
        },
-       "notes": [
-        "participant mean 80.0, SD 8.6, min 54.9, p5 62.7, <70%: 5"
-       ]
+       "notes": []
       },
       "cross_subject": {
        "n_splits": 5,
@@ -15897,9 +15895,7 @@
         "shrinkage": "auto",
         "features": 11
        },
-       "notes": [
-        "participant mean 80.7, SD 7.3, min 63.2, p5 65.1, <70%: 4"
-       ]
+       "notes": []
       }
      }
     },
