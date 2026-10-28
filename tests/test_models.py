@@ -1,5 +1,7 @@
 """Fast CPU tests for the TinyCNN and the training loop — fake data only."""
 
+import json
+
 import numpy as np
 import torch
 
@@ -124,7 +126,12 @@ def test_trial_majority_vote_groups_full_key():
 
 
 def test_v2_splits_same_tests_distinct_vals():
-    meta = _fake_meta()
+    # 12 subjects x 1 session x 3 gestures x 4 trials -> real val pools
+    rows = [(s, 1, g, t) for s in range(1, 13) for g in (1, 2, 3)
+            for t in range(1, 5)]
+    a = np.array(rows, dtype=np.int64)
+    meta = {"subject": a[:, 0], "session": a[:, 1],
+            "gesture": a[:, 2], "trial": a[:, 3]}
     v1 = splits.make("cross_subject", meta)
     v2 = splits.make("cross_subject", meta, protocol="v2")
     for s1, s2 in zip(v1, v2):
@@ -132,3 +139,57 @@ def test_v2_splits_same_tests_distinct_vals():
     subs_v1 = [set(meta["subject"][s.val].tolist()) for s in v1]
     subs_v2 = [set(meta["subject"][s.val].tolist()) for s in v2]
     assert any(a != b for a, b in zip(subs_v1, subs_v2))  # v2 re-draws vals
+
+
+def test_norm_stats_matches_numpy():
+    from emgdec.train import _norm_stats
+    rng = np.random.default_rng(7)
+    x = rng.normal(2, 0.5, (5000, 28, 64)).astype(np.float16)
+    m, s = _norm_stats(x)
+    xf = x.astype(np.float64)
+    np.testing.assert_allclose(m, xf.mean(axis=(0, 2)), atol=1e-6, rtol=1e-6)
+    np.testing.assert_allclose(s, xf.std(axis=(0, 2)), atol=1e-6, rtol=1e-6)
+
+
+def test_x_dir_changes_data_and_provenance(tmp_path):
+    """Two memmap dirs with different contents → different confusion and
+    different provenance x_dir (the --x-did-nothing regression)."""
+    meta = _fake_meta()
+    n = len(meta["subject"])
+    for name, amp in (("a", 1.0), ("b", -1.0)):
+        d = tmp_path / name
+        d.mkdir()
+        x = (np.random.default_rng(1).normal(
+            0, 0.5, (n, 28, 16)) + amp).astype(np.float16)
+        (d / "X.f16").write_bytes(x.tobytes())
+        (d / "shape.json").write_text(
+            json.dumps({"N": n, "C": 28, "W": 16}))
+    import emgdec.train as T
+    sp = splits.make("within_subject", meta)
+    recs = {}
+    for name in ("a", "b"):
+        d = tmp_path / name
+        X = np.memmap(d / "X.f16", dtype=np.float16, mode="r",
+                      shape=(n, 28, 16))
+        recs[name] = T.train_split(X, meta, sp[0], "both", device="cpu",
+                                   max_epochs=1, patience=1,
+                                   save_weights=False, x_dir=d)
+    assert recs["a"].provenance["x_dir"] != recs["b"].provenance["x_dir"]
+    assert recs["a"].provenance["preprocessing_mode"] == "offline"
+
+
+def test_seed_offsets_write_distinct_records(tmp_path):
+    """Offsets 0 and 1 produce two files with different training seeds."""
+    meta = _fake_meta()
+    n = len(meta["subject"])
+    rng = np.random.default_rng(0)
+    X = rng.normal(0, 1, (n, 28, 16)).astype(np.float32)
+    import emgdec.train as T
+    sp = splits.make("within_subject", meta)
+    r0 = T.train_split(X, meta, sp[0], "both", device="cpu", max_epochs=1,
+                       patience=1, save_weights=False, seed_offset=0)
+    r1 = T.train_split(X, meta, sp[0], "both", device="cpu", max_epochs=1,
+                       patience=1, save_weights=False, seed_offset=1)
+    assert r0.name != r1.name
+    assert r0.seed != r1.seed
+    assert r0.provenance["seed"] != r1.provenance["seed"]

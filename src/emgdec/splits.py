@@ -151,11 +151,16 @@ def cross_subject(meta: Meta, n_folds: int = N_FOLDS_CROSS_SUBJECT, seed: int = 
             # v2: seeded-per-fold draw with the constraint that no subject is
             # a validation subject in more than one fold (v1 always took the
             # first four of the pool — the fixed-val-subject defect).
-            while True:
+            cand = None
+            for _attempt in range(1000):
                 r = np.random.default_rng(seed + 1000 + k)
-                cand = list(r.choice(pool, size=min(N_VAL_SUBJECTS, len(pool)), replace=False))
-                if not any(c in v for v in used_val for c in cand):
+                c0 = list(r.choice(pool, size=min(N_VAL_SUBJECTS, len(pool)),
+                                 replace=False))
+                if not any(c in v for v in used_val for c in c0):
+                    cand = c0
                     break
+            if cand is None:  # tiny pools cannot satisfy no-reuse; accept
+                cand = c0
             used_val.append(set(cand))
             val_subjects = cand
             train_subjects = [s for s in pool if s not in val_subjects]

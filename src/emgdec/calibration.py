@@ -39,12 +39,14 @@ def _nll(p, y):
 
 
 def _brier(p, y):
-    one = np.zeros_like(p); one[np.arange(len(y)), y] = 1
+    one = np.zeros_like(p)
+    one[np.arange(len(y)), y] = 1
     return float(((p - one) ** 2).sum(1).mean())
 
 
 def _ece(p, y, bins=BINS):
-    conf, pred = p.max(1), p.argmax(1)
+    conf = p.max(1)
+    pred = p.argmax(1)
     edges = np.linspace(0, 1, bins + 1)
     ece, rows = 0.0, []
     for lo, hi in zip(edges[:-1], edges[1:]):
@@ -60,7 +62,8 @@ def _ece(p, y, bins=BINS):
 
 def _fit_T(val_logits, y):
     from scipy.optimize import minimize
-    f = lambda lt: _nll(_softmax(val_logits, np.exp(lt[0])), y)
+    def f(lt):
+        return _nll(_softmax(val_logits, np.exp(lt[0])), y)
     r = minimize(f, np.zeros(1), method="L-BFGS-B",
                  bounds=[(np.log(0.05), np.log(10))])
     return float(np.exp(r.x[0]))

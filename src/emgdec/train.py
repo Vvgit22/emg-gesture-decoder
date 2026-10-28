@@ -93,14 +93,47 @@ def _centre_crop(x: np.ndarray, crop: int) -> np.ndarray:
 
 
 def _load_windows(X: np.ndarray, idx: np.ndarray, chans: np.ndarray,
-                  crop: int) -> np.ndarray:
+                  crop: int, chunk: int = 20000) -> np.ndarray:
     """Pull rows `idx`, channels `chans`, centre-cropped, as float16 in RAM.
 
-    Indices are sorted first so memmap reads are sequential page hits.
+    Chunked: at most `chunk` rows are materialised from the memmap at a
+    time, channel-selection and crop applied per chunk into a single
+    preallocated output. Peak extra memory = one chunk, not a second full
+    copy — the old `X[idx][:, chans, :]` made two 5.4 GB copies for
+    config both and thrashed the machine.
     """
     idx = np.sort(np.asarray(idx))
-    out = np.asarray(X[idx][:, chans, :])
-    return _centre_crop(out, crop)
+    lo, hi = _crop_bounds(X.shape[2], crop)
+    out = np.empty((len(idx), len(chans), hi - lo), dtype=np.float16)
+    for i in range(0, len(idx), chunk):
+        sl = idx[i:i + chunk]
+        out[i:i + chunk] = np.asarray(X[sl][:, chans, lo:hi])
+    return out
+
+
+def _crop_bounds(w: int, crop: int) -> tuple[int, int]:
+    crop = min(crop, w)
+    lo = (w - crop) // 2
+    return lo, lo + crop
+
+
+def _norm_stats(Xtr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per-channel mean/std via float64 sum + sum-of-squares accumulation
+    in chunks — numerically equal to numpy's mean/std to ~1e-7, but never
+    materialises a float32 copy (the old `tr32 = Xtr.astype(np.float32)`
+    was another 10.8 GB).
+    """
+    n, c, w = Xtr.shape
+    s1 = np.zeros(c, np.float64)
+    s2 = np.zeros(c, np.float64)
+    cnt = np.float64(n) * w
+    for i in range(0, n, 20000):
+        x = np.asarray(Xtr[i:i + 20000], dtype=np.float64)
+        s1 += x.sum(axis=(0, 2))
+        s2 += (x * x).sum(axis=(0, 2))
+    mean = s1 / cnt
+    var = np.clip(s2 / cnt - mean * mean, 0, None)
+    return mean, np.sqrt(var)
 
 
 def _batch_iter(x: np.ndarray, y: np.ndarray, batch: int,
@@ -194,7 +227,8 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
                 batch: int = HYPER["batch"], lr: float = HYPER["lr"],
                 weight_decay: float = HYPER["weight_decay"],
                 save_weights: bool | None = None,
-                x_dir: Path | None = None) -> RunRecord:
+                x_dir: Path | None = None,
+                max_rss_gb: float | None = 12.0) -> RunRecord:
     """Train one split, return (and save) the RunRecord; test scored once."""
     splits.assert_no_leak(split, meta)
     if device is None:
@@ -205,9 +239,17 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
     patience = patience or budget["patience"]
 
     chans = np.asarray(list(CHANNELS[config]))
+    est_gb = len(split.train) * len(chans) * crop * 2 / 1e9
+    print(f"  loading train: ~{est_gb:.1f} GB float16", flush=True)
     Xtr = _load_windows(X, split.train, chans, crop)
     Xva = _load_windows(X, split.val, chans, crop)
     Xte = _load_windows(X, split.test, chans, crop)
+    rss_gb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e9
+    print(f"  loaded: RSS {rss_gb:.1f} GB", flush=True)
+    if max_rss_gb is not None and rss_gb > max_rss_gb:
+        raise SystemExit(
+            f"RSS {rss_gb:.1f} GB exceeds --max-rss-gb {max_rss_gb} "
+            "after loading; aborting before training")
     ytr = meta["gesture"][np.sort(np.asarray(split.train))].astype(int) - 1
     yva = meta["gesture"][np.sort(np.asarray(split.val))].astype(int) - 1
     yte = meta["gesture"][np.sort(np.asarray(split.test))].astype(int) - 1
@@ -218,10 +260,9 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
     np.random.seed(seed + 10000 * seed_offset + fold_index)
     model = TinyCNN(len(chans), N_GESTURES)
     # Per-channel stats over TRAIN windows only; clamped inside the model.
-    tr32 = Xtr.astype(np.float32)
-    mean = torch.from_numpy(tr32.mean(axis=(0, 2)))
-    std = torch.from_numpy(tr32.std(axis=(0, 2)))
-    del tr32
+    _m, _s = _norm_stats(Xtr)
+    mean = torch.from_numpy(_m.astype(np.float32))
+    std = torch.from_numpy(_s.astype(np.float32))
     model.set_normalisation(mean, std)
     model.to(device)
 
@@ -259,7 +300,7 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
         confusion=cm.tolist(),
         n_train=len(split.train), n_val=len(split.val),
         n_test=len(split.test), train_seconds=train_seconds,
-        seed=seed + fold_index, params=params,
+        seed=seed + 10000 * seed_offset + fold_index, params=params,
         val_accuracy=best_val, epochs_run=epochs_run,
         provenance=prov)
 
@@ -303,7 +344,8 @@ def run(kind: str, config: str, *, crop: int = 256,
         patience: int | None = None, limit: int | None = None,
         force: bool = False, experiment: str = "dev",
         mode: str = "fresh", seed_offset: int = 0,
-        protocol: str = "v1", x_dir: Path = MEMMAP_DIR) -> int:
+        protocol: str = "v1", x_dir: Path = MEMMAP_DIR,
+        max_rss_gb: float | None = 12.0) -> int:
     if mode == "report":
         from emgdec.evaluate import main as eval_main
         eval_main(["--experiment", experiment])
@@ -346,7 +388,8 @@ def run(kind: str, config: str, *, crop: int = 256,
                 rec = train_split(X, meta, split, cfg, crop=crop,
                                   device=device, max_epochs=max_epochs,
                                   patience=patience, fold_index=i,
-                                  seed_offset=seed_offset, x_dir=x_dir)
+                                  seed_offset=seed_offset, x_dir=x_dir,
+                                  max_rss_gb=max_rss_gb)
                 save_run(rec, runs_dir)
                 n += 1
                 acc = metrics.accuracy(np.asarray(rec.confusion))
@@ -379,12 +422,14 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--protocol", choices=["v1", "v2"], default="v1")
     ap.add_argument("--x", default=None,
                     help="override window memmap dir (e.g. data/memmap_causal)")
+    ap.add_argument("--max-rss-gb", type=float, default=12.0)
     a = ap.parse_args(argv)
     n = run(a.kind, a.config, crop=a.crop, device=a.device,
             max_epochs=a.max_epochs, patience=a.patience,
             limit=a.limit, force=a.force, experiment=a.experiment,
             mode=a.mode, seed_offset=a.seed_offset, protocol=a.protocol,
-            x_dir=Path(a.x) if a.x else MEMMAP_DIR)
+            x_dir=Path(a.x) if a.x else MEMMAP_DIR,
+            max_rss_gb=a.max_rss_gb)
     print(f"done: {n} runs")
 
 

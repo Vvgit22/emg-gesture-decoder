@@ -242,3 +242,19 @@ broke. Written as the work happens.
   81.5% — subject 1 was chosen as the demo person BEFORE any model was
   trained and was not re-selected; on this one person the two models
   happen to land close together.
+
+## 2026-10-27 — Phase 2: memory path + rerun
+
+- Thrash incident: offline_v1b fold4 reached 22 GB RSS and stalled 45 min
+  (two 7.7 GB memmaps + two 5.4 GB train copies + a 10.8 GB float32 stat
+  copy tipped the 16 GB box into swap). The earlier causal fold0 taking
+  6034 s was the same contention.
+- Found in the same pass: `--x` patched `emgdec.train.MEMMAP_DIR` but the
+  running module is `__main__` (causal_v1 folds were reproducing offline
+  results to all digits — they were offline runs); seed offsets 1/2
+  wrote to the same filenames as offset 0 and were "done: 0" skipped.
+- Fix: `_load_windows` now chunks 20k sorted rows into ONE preallocated
+  float16 array (peak = one copy); norm stats via chunked float64
+  sum/sumsq (matches numpy to ~1e-7); per-run RSS print + estimate +
+  --max-rss-gb 12 abort. All offline_v1b run files + .pt deleted and the
+  experiment is re-run end-to-end under the new loader.
