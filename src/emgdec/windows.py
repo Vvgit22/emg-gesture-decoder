@@ -52,12 +52,15 @@ def windows_per_trial(n_out_samples: int, drop_s: float = TRIAL_DROP_S) -> int:
 
 
 def build(subjects: list[int] | None = None, out_dir: Path = MEMMAP_DIR,
-          mains: float | None = None, raw_dir: Path = RAW_DIR) -> dict:
+          mains: float | None = None, raw_dir: Path = RAW_DIR,
+          preprocess: str = "offline") -> dict:
     """Build the memmap. Returns summary dict {N, C, W, bytes, seconds}."""
-    from .preprocess import preprocess
+    from .preprocess import preprocess as _offline
+    from .preprocess_causal import CausalPreprocessor
 
     mains = _load_mains() if mains is None else mains
     import wfdb
+    causal = CausalPreprocessor() if preprocess == "causal" else None
 
     trials = [t for t in iter_trials(raw_dir)
               if (subjects is None or t[0] in subjects)
@@ -82,7 +85,7 @@ def build(subjects: list[int] | None = None, out_dir: Path = MEMMAP_DIR,
         if n_expected == 0:
             continue
         x, _, _ = read_trial(path)
-        x = preprocess(x, mains)          # [n_out, 32] at FS_OUT
+        x = causal.reset() or causal.process(x) if causal else _offline(x, mains)          # [n_out, 32] at FS_OUT
         x = x[:, KEEP]                    # [n_out, 28]
         drop = int(TRIAL_DROP_S * FS_OUT)
         for i in range(n_expected):
@@ -121,9 +124,12 @@ def _main() -> None:
                     help="comma list, e.g. 1,2 — default: all")
     ap.add_argument("--out", type=str, default=str(MEMMAP_DIR))
     ap.add_argument("--mains", type=float, default=None)
+    ap.add_argument("--preprocess", choices=["offline", "causal"],
+                    default="offline")
     args = ap.parse_args()
     subs = [int(s) for s in args.subjects.split(",")] if args.subjects else None
-    build(subjects=subs, out_dir=Path(args.out), mains=args.mains)
+    build(subjects=subs, out_dir=Path(args.out), mains=args.mains,
+          preprocess=args.preprocess)
 
 
 if __name__ == "__main__":

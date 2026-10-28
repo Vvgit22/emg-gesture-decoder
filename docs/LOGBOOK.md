@@ -242,3 +242,49 @@ broke. Written as the work happens.
   81.5% — subject 1 was chosen as the demo person BEFORE any model was
   trained and was not re-selected; on this one person the two models
   happen to land close together.
+
+## 2026-10-27 — Phase 2: memory path + rerun
+
+- Thrash incident: offline_v1b fold4 reached 22 GB RSS and stalled 45 min
+  (two 7.7 GB memmaps + two 5.4 GB train copies + a 10.8 GB float32 stat
+  copy tipped the 16 GB box into swap). The earlier causal fold0 taking
+  6034 s was the same contention.
+- Found in the same pass: `--x` patched `emgdec.train.MEMMAP_DIR` but the
+  running module is `__main__` (causal_v1 folds were reproducing offline
+  results to all digits — they were offline runs); seed offsets 1/2
+  wrote to the same filenames as offset 0 and were "done: 0" skipped.
+- Fix: `_load_windows` now chunks 20k sorted rows into ONE preallocated
+  float16 array (peak = one copy); norm stats via chunked float64
+  sum/sumsq (matches numpy to ~1e-7); per-run RSS print + estimate +
+  --max-rss-gb 12 abort. All offline_v1b run files + .pt deleted and the
+  experiment is re-run end-to-end under the new loader.
+
+## 2026-10-28 — Phase 2 results + .pt collision incident
+
+- Results (results.json per experiment): causal_v1 cross_subject 80.0 ± 4.6
+  (within 92.7 ± 6.1); offline_v1b 80.3 ± 3.4 over 3 seeds (per-seed
+  79.5/80.8/80.4, across-seed SD 0.64); protocol_v2 80.7 ± 2.3 over 3 seeds
+  (lda v2 67.9 ± 2.2, participant p5 65.1, only 4 <70%); hgb (v1 splits)
+  cross_day 80.2, cross_subject 62.5 — gradient boosting UNDERPERFORMS
+  both lda (67.9) and cnn (79.6) cross-subject.
+- Paired causal−offline per fold: +1.6/+0.6/+2.5/−0.6/−2.1 → mean +0.41 pp
+  (SD 1.81): causal filtering costs nothing measurable — the demo can run
+  on a live pipeline.
+- .pt collision: MODELS_DIR was shared, so every experiment's foldK.pt
+  overwrote the previous one (v1 weights lost; offline_v1b + causal_v1
+  cs weights lost until retrained). Identified by sha256-matching each
+  file against every run record's checkpoint_sha256; 144 files re-homed
+  into artifacts/models/<EXP>/. train.py now writes models per
+  experiment. Missing checkpoints retrained (10 folds, ~70 s each).
+- perturb.py crashed on dtype (double vs float); rewritten vectorised
+  (whole-array numpy, MPS, batch 2048) after fold0 alone took ~50 min.
+- calibration on causal_v1: temperatures 1.41–2.01 across folds; demo
+  metas carry T=0.861 (s01_d1) and T=1.991 (fold3); causal ONNX pair
+  exported, parity 2.9e-6 / 2.3e-5, argmax 1.000.
+- perturbations (offline_v1b seed-0, controlled synthetic diagnostics,
+  NOT evidence of real re-donning robustness), mean over 5 folds:
+  clean 0.796 | dropout1 0.750 | dropout2 0.686 | dropout4 0.550 |
+  dropout8 0.347 | gain×(0.8,1.25) 0.769 | gain×(0.5,2.0) 0.551 |
+  noise 20dB 0.786 | noise 10dB 0.645 | noise 0dB 0.184.
+  Read: graceful-ish vs dropout1-2; 8 dead channels or 0 dB noise is
+  catastrophic — expected for a small feature-learnt net.

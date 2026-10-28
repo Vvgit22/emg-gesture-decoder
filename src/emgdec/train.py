@@ -61,7 +61,8 @@ from torch import nn
 from emgdec import metrics, splits
 from emgdec.baselines import _load_meta
 from emgdec.config import N_GESTURES, SEED
-from emgdec.evaluate import RUNS_DIR, RunRecord, save_run
+from emgdec.evaluate import RUNS_DIR, RunRecord, exp_runs, save_run
+from emgdec.provenance import collect as prov_collect, sha256_file
 from emgdec.models import CHANNELS, TinyCNN, n_params
 
 REPO = Path(__file__).resolve().parents[2]
@@ -92,14 +93,47 @@ def _centre_crop(x: np.ndarray, crop: int) -> np.ndarray:
 
 
 def _load_windows(X: np.ndarray, idx: np.ndarray, chans: np.ndarray,
-                  crop: int) -> np.ndarray:
+                  crop: int, chunk: int = 20000) -> np.ndarray:
     """Pull rows `idx`, channels `chans`, centre-cropped, as float16 in RAM.
 
-    Indices are sorted first so memmap reads are sequential page hits.
+    Chunked: at most `chunk` rows are materialised from the memmap at a
+    time, channel-selection and crop applied per chunk into a single
+    preallocated output. Peak extra memory = one chunk, not a second full
+    copy — the old `X[idx][:, chans, :]` made two 5.4 GB copies for
+    config both and thrashed the machine.
     """
     idx = np.sort(np.asarray(idx))
-    out = np.asarray(X[idx][:, chans, :])
-    return _centre_crop(out, crop)
+    lo, hi = _crop_bounds(X.shape[2], crop)
+    out = np.empty((len(idx), len(chans), hi - lo), dtype=np.float16)
+    for i in range(0, len(idx), chunk):
+        sl = idx[i:i + chunk]
+        out[i:i + chunk] = np.asarray(X[sl][:, chans, lo:hi])
+    return out
+
+
+def _crop_bounds(w: int, crop: int) -> tuple[int, int]:
+    crop = min(crop, w)
+    lo = (w - crop) // 2
+    return lo, lo + crop
+
+
+def _norm_stats(Xtr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per-channel mean/std via float64 sum + sum-of-squares accumulation
+    in chunks — numerically equal to numpy's mean/std to ~1e-7, but never
+    materialises a float32 copy (the old `tr32 = Xtr.astype(np.float32)`
+    was another 10.8 GB).
+    """
+    n, c, w = Xtr.shape
+    s1 = np.zeros(c, np.float64)
+    s2 = np.zeros(c, np.float64)
+    cnt = np.float64(n) * w
+    for i in range(0, n, 20000):
+        x = np.asarray(Xtr[i:i + 20000], dtype=np.float64)
+        s1 += x.sum(axis=(0, 2))
+        s2 += (x * x).sum(axis=(0, 2))
+    mean = s1 / cnt
+    var = np.clip(s2 / cnt - mean * mean, 0, None)
+    return mean, np.sqrt(var)
 
 
 def _batch_iter(x: np.ndarray, y: np.ndarray, batch: int,
@@ -144,8 +178,8 @@ def fit(model: nn.Module, Xtr: np.ndarray, ytr: np.ndarray,
     Returns (best_state_dict, best_val_accuracy, epochs_run). With no
     validation set, runs all epochs and returns the final weights.
     """
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+    # Caller seeds globally before model init; we seed only the shuffle
+    # generator here so both paths end up deterministic.
     gen = torch.Generator().manual_seed(seed)
     opt = torch.optim.AdamW(model.parameters(), lr=lr,
                             weight_decay=weight_decay)
@@ -186,13 +220,16 @@ def _should_save_pt(kind: str, config: str) -> bool:
 
 
 def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
-                config: str, *, crop: int = 256,
+                config: str, *, crop: int = 256, seed_offset: int = 0,
                 device: torch.device | str | None = None,
                 max_epochs: int | None = None, patience: int | None = None,
                 seed: int = SEED, fold_index: int = 0,
                 batch: int = HYPER["batch"], lr: float = HYPER["lr"],
                 weight_decay: float = HYPER["weight_decay"],
-                save_weights: bool | None = None) -> RunRecord:
+                save_weights: bool | None = None,
+                x_dir: Path | None = None,
+                max_rss_gb: float | None = 12.0,
+                models_dir: Path = MODELS_DIR) -> RunRecord:
     """Train one split, return (and save) the RunRecord; test scored once."""
     splits.assert_no_leak(split, meta)
     if device is None:
@@ -203,53 +240,76 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
     patience = patience or budget["patience"]
 
     chans = np.asarray(list(CHANNELS[config]))
+    est_gb = len(split.train) * len(chans) * crop * 2 / 1e9
+    print(f"  loading train: ~{est_gb:.1f} GB float16", flush=True)
     Xtr = _load_windows(X, split.train, chans, crop)
     Xva = _load_windows(X, split.val, chans, crop)
     Xte = _load_windows(X, split.test, chans, crop)
+    rss_gb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e9
+    print(f"  loaded: RSS {rss_gb:.1f} GB", flush=True)
+    if max_rss_gb is not None and rss_gb > max_rss_gb:
+        raise SystemExit(
+            f"RSS {rss_gb:.1f} GB exceeds --max-rss-gb {max_rss_gb} "
+            "after loading; aborting before training")
     ytr = meta["gesture"][np.sort(np.asarray(split.train))].astype(int) - 1
     yva = meta["gesture"][np.sort(np.asarray(split.val))].astype(int) - 1
     yte = meta["gesture"][np.sort(np.asarray(split.test))].astype(int) - 1
 
+    # Seed BEFORE the model exists, so init order is identical whether a
+    # split runs alone or after another (resume-order independence).
+    torch.manual_seed(seed + 10000 * seed_offset + fold_index)
+    np.random.seed(seed + 10000 * seed_offset + fold_index)
     model = TinyCNN(len(chans), N_GESTURES)
     # Per-channel stats over TRAIN windows only; clamped inside the model.
-    tr32 = Xtr.astype(np.float32)
-    mean = torch.from_numpy(tr32.mean(axis=(0, 2)))
-    std = torch.from_numpy(tr32.std(axis=(0, 2)))
-    del tr32
+    _m, _s = _norm_stats(Xtr)
+    mean = torch.from_numpy(_m.astype(np.float32))
+    std = torch.from_numpy(_s.astype(np.float32))
     model.set_normalisation(mean, std)
     model.to(device)
 
     t0 = time.time()
     best_state, best_val, epochs_run = fit(
         model, Xtr, ytr, Xva, yva, device=device, max_epochs=max_epochs,
-        patience=patience, seed=seed + fold_index, batch=batch, lr=lr,
+        patience=patience, seed=seed + 10000 * seed_offset + fold_index, batch=batch, lr=lr,
         weight_decay=weight_decay)
     model.load_state_dict(best_state)
     train_seconds = time.time() - t0
 
     cm = _confusion(model, Xte, yte, device)
     name = "cnn" if crop == 256 else f"cnn_w{crop}"
+    split_name = split.name + (f"_seed{seed_offset}" if seed_offset else "")
     params = dict(HYPER, crop=crop, max_epochs=max_epochs, patience=patience,
                   device=str(device), n_params=n_params(model),
                   torch=torch.__version__)
     if save_weights is None:
         save_weights = _should_save_pt(split.kind, config) and crop == 256
+    prov = prov_collect(
+        seed=seed + 10000 * seed_offset + fold_index, opt=params, device=str(device), split=split,
+        extra={"selected_epoch": epochs_run,
+               "selection_rule": f"max val accuracy, patience {patience}",
+               "preprocessing_mode": (json.loads(
+                   (Path(x_dir) / "shape.json").read_text()
+               ).get("preprocess", "offline") if x_dir else "offline"),
+               "x_dir": str(x_dir) if x_dir else str(MEMMAP_DIR)})
     if save_weights:
-        p = (MODELS_DIR / name / config / split.kind / f"{split.name}.pt")
+        p = (Path(models_dir) / name / config / split.kind
+             / f"{split_name}.pt")
         p.parent.mkdir(parents=True, exist_ok=True)
         torch.save(model.state_dict(), p)
+        prov["checkpoint_sha256"] = sha256_file(p)
     return RunRecord(
-        model=name, config=config, kind=split.kind, name=split.name,
+        model=name, config=config, kind=split.kind, name=split_name,
         confusion=cm.tolist(),
         n_train=len(split.train), n_val=len(split.val),
         n_test=len(split.test), train_seconds=train_seconds,
-        seed=seed + fold_index, params=params,
-        val_accuracy=best_val, epochs_run=epochs_run)
+        seed=seed + 10000 * seed_offset + fold_index, params=params,
+        val_accuracy=best_val, epochs_run=epochs_run,
+        provenance=prov)
 
 
-def _open_X() -> tuple[np.memmap, dict]:
-    shape = json.loads((MEMMAP_DIR / "shape.json").read_text())
-    return np.memmap(X_F16, dtype=np.float16, mode="r",
+def _open_X(x_dir: Path = MEMMAP_DIR) -> tuple[np.memmap, dict]:
+    shape = json.loads((Path(x_dir) / "shape.json").read_text())
+    return np.memmap(Path(x_dir) / "X.f16", dtype=np.float16, mode="r",
                      shape=(shape["N"], shape["C"], shape["W"])), shape
 
 
@@ -257,27 +317,83 @@ def _run_path(model: str, config: str, kind: str, name: str) -> Path:
     return RUNS_DIR / model / config / kind / f"{name}.json"
 
 
+def _prov_matches(rec_path: Path, split, seed: int | None = None) -> tuple[bool, str]:
+    # A finished record counts for resume only if git commit, preprocessing
+    # config and split fingerprint match what this code would produce now.
+    try:
+        d = json.loads(rec_path.read_text())
+        prov = d.get("provenance") or {}
+        if not prov:
+            return False, "no provenance"
+        cur = prov_collect(seed=seed or 0, opt={}, device="-", split=split)
+        if prov.get("git_commit") != cur["git_commit"]:
+            return False, "git commit differs"
+        if prov.get("preprocessing") != cur["preprocessing"]:
+            return False, "preprocessing config differs"
+        if prov.get("split_fingerprint") != cur["split_fingerprint"]:
+            return False, "split fingerprint differs"
+        if prov.get("seed") != cur.get("seed"):
+            return False, "training seed differs"
+        if d.get("status") != "finished":
+            return False, "status is not finished"
+        return True, ""
+    except Exception as e:
+        return False, f"unreadable record: {e}"
+
+
 def run(kind: str, config: str, *, crop: int = 256,
         device: str | None = None, max_epochs: int | None = None,
         patience: int | None = None, limit: int | None = None,
-        force: bool = False) -> int:
+        force: bool = False, experiment: str = "dev",
+        mode: str = "fresh", seed_offset: int = 0,
+        protocol: str = "v1", x_dir: Path = MEMMAP_DIR,
+        max_rss_gb: float | None = 12.0) -> int:
+    if mode == "report":
+        from emgdec.evaluate import main as eval_main
+        eval_main(["--experiment", experiment])
+        return 0
     meta = _load_meta()
-    X, _ = _open_X()
+    X, shape = _open_X(x_dir)
+    runs_dir = exp_runs(experiment)
     model = "cnn" if crop == 256 else f"cnn_w{crop}"
     kinds = list(splits.ALL) if kind == "all" else [kind]
     configs = list(CHANNELS) if config == "all" else [config]
     n = 0
     for k in kinds:
         for cfg in configs:
-            for i, split in enumerate(splits.make(k, meta)):
+            if protocol != "v1" and k != "cross_subject":
+                continue
+            existing = runs_dir / model / cfg / k
+            if (mode == "fresh" and not force and existing.exists()
+                    and any(existing.glob("*.json"))):
+                raise SystemExit(
+                    f"fresh mode: {existing} already has runs; "
+                    "use --mode resume or --force")
+            for i, split in enumerate(splits.make(k, meta, protocol)):
                 if limit is not None and i >= limit:
                     break
-                if not force and _run_path(model, cfg, k, split.name).exists():
+                rec_name = split.name + \
+                    (f"_seed{seed_offset}" if seed_offset else "")
+                rec_path = runs_dir / model / cfg / k / f"{rec_name}.json"
+                if rec_path.exists() and not force:
+                    if mode == "fresh":
+                        raise SystemExit(
+                            f"fresh mode: {rec_path} exists; "
+                            "use --mode resume or --force")
+                    ok, why = _prov_matches(
+                        rec_path, split,
+                        seed=SEED + 10000 * seed_offset + i)
+                    if not ok:
+                        raise SystemExit(
+                            f"resume mode: {split.name} mismatch: {why}")
                     continue
                 rec = train_split(X, meta, split, cfg, crop=crop,
                                   device=device, max_epochs=max_epochs,
-                                  patience=patience, fold_index=i)
-                save_run(rec, RUNS_DIR)
+                                  patience=patience, fold_index=i,
+                                  seed_offset=seed_offset, x_dir=x_dir,
+                                  max_rss_gb=max_rss_gb,
+                                  models_dir=MODELS_DIR / experiment)
+                save_run(rec, runs_dir)
                 n += 1
                 acc = metrics.accuracy(np.asarray(rec.confusion))
                 print(f"{model}/{cfg}/{k}/{split.name}: "
@@ -285,6 +401,7 @@ def run(kind: str, config: str, *, crop: int = 256,
                       f"test={acc:.3f} {rec.train_seconds:.0f}s", flush=True)
         peak_gb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e9
         print(f"{k}: peak RSS {peak_gb:.1f} GB", flush=True)
+    return n
     return n
 
 
@@ -301,10 +418,21 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--patience", type=int, default=None)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--experiment", default="dev")
+    ap.add_argument("--mode", choices=["fresh", "resume", "report"],
+                    default="fresh")
+    ap.add_argument("--seed-offset", type=int, default=0)
+    ap.add_argument("--protocol", choices=["v1", "v2"], default="v1")
+    ap.add_argument("--x", default=None,
+                    help="override window memmap dir (e.g. data/memmap_causal)")
+    ap.add_argument("--max-rss-gb", type=float, default=12.0)
     a = ap.parse_args(argv)
     n = run(a.kind, a.config, crop=a.crop, device=a.device,
             max_epochs=a.max_epochs, patience=a.patience,
-            limit=a.limit, force=a.force)
+            limit=a.limit, force=a.force, experiment=a.experiment,
+            mode=a.mode, seed_offset=a.seed_offset, protocol=a.protocol,
+            x_dir=Path(a.x) if a.x else MEMMAP_DIR,
+            max_rss_gb=a.max_rss_gb)
     print(f"done: {n} runs")
 
 

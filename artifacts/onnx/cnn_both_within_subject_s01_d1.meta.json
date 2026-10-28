@@ -63,5 +63,6 @@
  "output": "logits [B, 17]",
  "test_accuracy": 0.8563025210084033,
  "opset": 17,
- "torch": "2.8.0"
+ "torch": "2.8.0",
+ "temperature": 0.866
 }

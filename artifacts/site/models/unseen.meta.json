@@ -63,5 +63,12 @@
  "output": "logits [B, 17]",
  "test_accuracy": 0.8146758703481393,
  "opset": 17,
- "torch": "2.8.0"
+ "torch": "2.8.0",
+ "checkpoint_sha256": "5bfac090d9b38523255f08519f9117716d7980cfdafff58c00de25f0a0e93f50",
+ "parity": {
+  "max_logit_diff": 2.288818359375e-05,
+  "argmax_agreement": 1.0,
+  "n_windows": 512,
+  "ok": true
+ }
 }

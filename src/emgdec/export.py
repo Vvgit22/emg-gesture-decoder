@@ -39,6 +39,7 @@ from emgdec.config import BAND, FS_OUT, GESTURE_NAMES, N_GESTURES, WIN
 from emgdec.evaluate import RUNS_DIR
 from emgdec.models import CHANNELS, TinyCNN
 from emgdec.train import MODELS_DIR, _open_X
+from emgdec.provenance import sha256_file
 
 REPO = Path(__file__).resolve().parents[2]
 ONNX_DIR = REPO / "artifacts" / "onnx"
@@ -57,10 +58,16 @@ def _run_record(model: str, config: str, kind: str, name: str) -> dict:
     return json.loads(p.read_text())
 
 
+class ParityError(RuntimeError):
+    """Raised when the ONNX graph does not reproduce the torch model."""
+
+
 def export(model: str = "cnn", config: str = "both", kind: str = "within_subject",
-           name: str = "s01_d1", out_dir: Path = ONNX_DIR) -> Path:
+           name: str = "s01_d1", out_dir: Path = ONNX_DIR,
+           experiment: str = "protocol_v1",
+           x_dir: Path | None = None) -> Path:
     """Load the saved weights and export ONNX + meta.json. Returns path."""
-    pt = MODELS_DIR / model / config / kind / f"{name}.pt"
+    pt = MODELS_DIR / experiment / model / config / kind / f"{name}.pt"
     if not pt.exists():
         raise FileNotFoundError(f"no saved weights at {pt} "
                                 "(train with save_weights first)")
@@ -86,6 +93,7 @@ def export(model: str = "cnn", config: str = "both", kind: str = "within_subject
         "classes": GESTURE_NAMES, "input": "emg: float32 [B, C, 256] raw",
         "output": "logits [B, 17]", "test_accuracy": test_acc,
         "opset": OPSET, "torch": torch.__version__,
+        "checkpoint_sha256": sha256_file(pt),
     }
     onnx_path.with_suffix(".meta.json").write_text(json.dumps(meta, indent=1))
     return onnx_path
@@ -115,11 +123,11 @@ def verify(onnx_path: Path, pt_path: Path, x_test: np.ndarray,
 
 
 def _test_windows(model: str, config: str, kind: str, name: str,
-                  n: int = 512) -> np.ndarray:
+                  n: int = 512, x_dir=None) -> np.ndarray:
     """Real held-out test windows of this split (first n)."""
     meta = _load_meta()
     split = _find_split(meta, kind, name)
-    X, _ = _open_X()
+    X, _ = _open_X(x_dir) if x_dir else _open_X()
     chans = np.asarray(list(CHANNELS[config]))
     idx = np.sort(np.asarray(split.test))[:n]
     return np.asarray(X[idx][:, chans, :], dtype=np.float32)
@@ -138,15 +146,29 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--config", default="both")
     ap.add_argument("--kind", default="within_subject")
     ap.add_argument("--name", default="s01_d1")
+    ap.add_argument("--experiment", default="protocol_v1")
+    ap.add_argument("--x", default=None)
     a = ap.parse_args(argv)
-    onnx_path = export(a.model, a.config, a.kind, a.name)
-    pt = MODELS_DIR / a.model / a.config / a.kind / f"{a.name}.pt"
-    x_test = _test_windows(a.model, a.config, a.kind, a.name)
+    onnx_path = export(a.model, a.config, a.kind, a.name,
+                       out_dir=ONNX_DIR / a.experiment,
+                       experiment=a.experiment,
+                       x_dir=Path(a.x) if a.x else None)
+    pt = (MODELS_DIR / a.experiment / a.model / a.config / a.kind
+          / f"{a.name}.pt")
+    x_test = _test_windows(a.model, a.config, a.kind, a.name,
+                           x_dir=Path(a.x) if a.x else None)
     res = verify(onnx_path, pt, x_test)
     _record_parity(onnx_path, res)
+    # bake parity into the meta sidecar the demo ships
+    meta_p = onnx_path.with_suffix(".meta.json")
+    mj = json.loads(meta_p.read_text())
+    mj["parity"] = res
+    meta_p.write_text(json.dumps(mj, indent=1))
     print(f"{onnx_path.name}: {onnx_path.stat().st_size/1024:.0f} KB, "
           f"parity max|d|={res['max_logit_diff']:.2e} "
           f"argmax={res['argmax_agreement']:.3f} ok={res['ok']}")
+    if not res["ok"]:
+        raise ParityError(f"{onnx_path.name}: parity check failed {res}")
 
 
 if __name__ == "__main__":
