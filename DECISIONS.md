@@ -388,3 +388,17 @@ Newest entries at the bottom; do not rewrite history — append.
   isolates the intervention.
 - **Alternative rejected:** re-using v1 fold accuracies as the
   causal baseline — invalid for the same reason.
+
+## 2026-10-28 — Experiment-scoped model store
+
+- **Decision:** `artifacts/models/<experiment>/…` — run names (foldK) are
+  identical across experiments, so a shared dir made last-writer-wins.
+  checkpoint_sha256 in provenance is what let us identify files.
+- **Alternative rejected:** namespacing by run name only — experiment is
+  the true namespace.
+
+## 2026-10-28 — Perturbation targets offline_v1b seed-0
+
+- v1 .pt files were lost in the collision before perturbation ran.
+  offline_v1b seed-0 uses the same splits and architecture with the
+  fixed pipeline; the grid now runs on it and says so in the JSON.

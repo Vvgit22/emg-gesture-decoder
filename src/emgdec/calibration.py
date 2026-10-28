@@ -16,13 +16,19 @@ temperature appended into their export .meta.json (`temperature` key).
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
 
 REPO = Path(__file__).resolve().parents[2]
-PRED = REPO / "artifacts" / "experiments" / "protocol_v1_analysis" / "predictions"
-OUTD = REPO / "artifacts" / "experiments" / "protocol_v1_analysis"
+_P = (sys.argv[sys.argv.index("--pred") + 1] if "--pred" in sys.argv
+      else None)
+_E = (sys.argv[sys.argv.index("--experiment") + 1]
+      if "--experiment" in sys.argv else "protocol_v1_analysis")
+PRED = (Path(_P) if _P else
+        REPO / "artifacts" / "experiments" / _E / "predictions")
+OUTD = REPO / "artifacts" / "experiments" / _E
 ONNX_DIR = REPO / "artifacts" / "onnx"
 BINS = 10
 COVERAGE_TARGETS = [1.0, 0.9, 0.8, 0.7]
@@ -145,10 +151,14 @@ def main() -> None:
     for stem, kind in (("cnn_both_within_subject_s01_d1", "within_subject"),
                        ("cnn_both_cross_subject_fold3", "cross_subject")):
         mp = ONNX_DIR / f"{stem}.meta.json"
+        if not mp.exists():
+            continue
         mj = json.loads(mp.read_text())
-        mj["temperature"] = temps[kind][stem.split(kind + "_")[1]]
-        mp.write_text(json.dumps(mj, indent=1))
-        print(f"temperature -> {mp.name}: {mj['temperature']:.3f}")
+        key = stem.split(kind + "_")[1]
+        if key in temps.get(kind, {}):
+            mj["temperature"] = temps[kind][key]
+            mp.write_text(json.dumps(mj, indent=1))
+            print(f"temperature -> {mp.name}: {mj['temperature']:.3f}")
 
 
 if __name__ == "__main__":

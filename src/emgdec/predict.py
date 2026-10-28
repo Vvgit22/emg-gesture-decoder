@@ -59,24 +59,34 @@ def _dump_one(X, meta, split, chans, model, out: Path, committed_cm):
         pred=pred, logits=logits.astype(np.float16))
 
 
-def main() -> None:
+def main(experiment: str = "protocol_v1", out_root: Path = OUT) -> None:
     meta = _load_meta()
-    X, _ = _open_X()
+    import sys
+    x_dir = None
+    argv = sys.argv[1:]
+    if "--x" in argv:
+        x_dir = Path(argv[argv.index("--x") + 1])
+    X, _ = _open_X(Path(x_dir) if x_dir else
+                   (REPO / "data" / "memmap"))
+    mroot = MODELS_DIR / experiment
+    protocol = "v2" if experiment == "protocol_v2" else "v1"
     n = 0
-    for pt in sorted(MODELS_DIR.rglob("*.pt")):
-        rel = pt.relative_to(MODELS_DIR).with_suffix("")
+    for pt in sorted(mroot.rglob("*.pt")):
+        rel = pt.relative_to(mroot).with_suffix("")
         model, config = rel.parts[0], rel.parts[1]
         kind, name = rel.parts[2], rel.parts[3]
         committed = json.loads(
-            (exp_runs("protocol_v1") / model / config / kind
+            (exp_runs(experiment) / model / config / kind
              / f"{name}.json").read_text())
-        split = next(s for s in splits.make(kind, meta) if s.name == name)
+        base = name.split("_seed")[0]
+        split = next(s for s in splits.make(kind, meta, protocol)
+                     if s.name == base)
         chans = np.asarray(list(CHANNELS[config]))
         net = TinyCNN(len(chans), N_GESTURES)
         net.load_state_dict(torch.load(pt, map_location="cpu",
                                        weights_only=True))
         net.eval()
-        _dump_one(X, meta, split, chans, net, OUT / f"{rel}.npz",
+        _dump_one(X, meta, split, chans, net, out_root / f"{rel}.npz",
                   np.asarray(committed["confusion"]))
         n += 1
         print(f"{rel}: ok", flush=True)
@@ -148,4 +158,9 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--lda":
         dump_lda()
     else:
-        main()
+        exp = (sys.argv[sys.argv.index("--experiment") + 1]
+               if "--experiment" in sys.argv else "protocol_v1")
+        outr = (Path(sys.argv[sys.argv.index("--out") + 1])
+                if "--out" in sys.argv else
+                REPO / "artifacts" / "experiments" / exp / "predictions")
+        main(exp, outr)

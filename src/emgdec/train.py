@@ -228,7 +228,8 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
                 weight_decay: float = HYPER["weight_decay"],
                 save_weights: bool | None = None,
                 x_dir: Path | None = None,
-                max_rss_gb: float | None = 12.0) -> RunRecord:
+                max_rss_gb: float | None = 12.0,
+                models_dir: Path = MODELS_DIR) -> RunRecord:
     """Train one split, return (and save) the RunRecord; test scored once."""
     splits.assert_no_leak(split, meta)
     if device is None:
@@ -291,7 +292,8 @@ def train_split(X: np.ndarray, meta: dict[str, np.ndarray], split,
                ).get("preprocess", "offline") if x_dir else "offline"),
                "x_dir": str(x_dir) if x_dir else str(MEMMAP_DIR)})
     if save_weights:
-        p = (MODELS_DIR / name / config / split.kind / f"{split_name}.pt")
+        p = (Path(models_dir) / name / config / split.kind
+             / f"{split_name}.pt")
         p.parent.mkdir(parents=True, exist_ok=True)
         torch.save(model.state_dict(), p)
         prov["checkpoint_sha256"] = sha256_file(p)
@@ -389,7 +391,8 @@ def run(kind: str, config: str, *, crop: int = 256,
                                   device=device, max_epochs=max_epochs,
                                   patience=patience, fold_index=i,
                                   seed_offset=seed_offset, x_dir=x_dir,
-                                  max_rss_gb=max_rss_gb)
+                                  max_rss_gb=max_rss_gb,
+                                  models_dir=MODELS_DIR / experiment)
                 save_run(rec, runs_dir)
                 n += 1
                 acc = metrics.accuracy(np.asarray(rec.confusion))

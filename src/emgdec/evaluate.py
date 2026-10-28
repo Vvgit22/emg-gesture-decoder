@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import platform
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -162,6 +163,12 @@ def _check_group(group: list[RunRecord], model: str, config: str,
     return "; ".join(flags) if flags else None
 
 
+def _seed_of(name: str) -> str:
+    """Strip a trailing _seed<k> so multi-seed records join their fold."""
+    m = re.search(r"_seed(\d+)$", name)
+    return m.group(1) if m else "0"
+
+
 def build(runs_dir: Path = RUNS_DIR) -> dict:
     recs = load_runs(runs_dir)
     results: dict = {
@@ -181,6 +188,22 @@ def build(runs_dir: Path = RUNS_DIR) -> dict:
                 if not group:
                     continue
                 cell = _summarise(group)
+                seeds = {_seed_of(r.name) for r in group}
+                if len(seeds) > 1:
+                    # multi-seed: mean/SD per seed over shared folds, then
+                    # mean/SD of the per-seed means across seeds
+                    per_seed = {}
+                    for sd in sorted(seeds):
+                        sub = [r for r in group if _seed_of(r.name) == sd]
+                        c = _summarise(sub)
+                        per_seed[sd] = {"n_splits": c["n_splits"],
+                                        "accuracy_mean": c["accuracy_mean"],
+                                        "accuracy_std": c["accuracy_std"]}
+                    means = np.array([v["accuracy_mean"]
+                                      for v in per_seed.values()])
+                    cell["seeds"] = per_seed
+                    cell["seed_mean"] = float(means.mean())
+                    cell["seed_std"] = float(means.std(ddof=1)) if len(means) > 1 else 0.0
                 results["cells"].setdefault(model, {}).setdefault(config, {})[kind] = cell
                 for tag in ("mixed", "no_provenance", "incomplete"):
                     msg = _check_group(group, model, config, kind, expected)

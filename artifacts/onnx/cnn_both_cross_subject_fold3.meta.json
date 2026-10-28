@@ -64,5 +64,5 @@
  "test_accuracy": 0.8146758703481393,
  "opset": 17,
  "torch": "2.8.0",
- "temperature": 1.5003151986657675
+ "temperature": 1.5
 }
