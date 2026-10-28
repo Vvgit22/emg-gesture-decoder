@@ -1,0 +1,76 @@
+{
+ "label": "controlled synthetic diagnostics, not evidence of real electrode re-donning robustness; checkpoints are offline_v1b seed-0 (the v1 .pt were overwritten by later experiments \u2014 same split protocol, same architecture, new code)",
+ "grid": [
+  "channel_dropout:1",
+  "channel_dropout:2",
+  "channel_dropout:4",
+  "channel_dropout:8",
+  "gain:(0.8, 1.25)",
+  "gain:(0.5, 2.0)",
+  "noise:20",
+  "noise:10",
+  "noise:0"
+ ],
+ "folds": {
+  "fold0": {
+   "clean": 0.7460851007069494,
+   "channel_dropout:1": 0.7062113734382641,
+   "channel_dropout:2": 0.616572554947905,
+   "channel_dropout:4": 0.5666325789575088,
+   "channel_dropout:8": 0.3061431980199487,
+   "gain:(0.8, 1.25)": 0.700366072354868,
+   "gain:(0.5, 2.0)": 0.4794599321209965,
+   "noise:20": 0.7419738265676642,
+   "noise:10": 0.5994664532479658,
+   "noise:0": 0.13619966505120568
+  },
+  "fold1": {
+   "clean": 0.8274331955004224,
+   "channel_dropout:1": 0.7815541031227305,
+   "channel_dropout:2": 0.7616498451232344,
+   "channel_dropout:4": 0.5964044877210143,
+   "channel_dropout:8": 0.3803684436737658,
+   "gain:(0.8, 1.25)": 0.7986216708905785,
+   "gain:(0.5, 2.0)": 0.5382301068575579,
+   "noise:20": 0.8203222029552562,
+   "noise:10": 0.6629644450372741,
+   "noise:0": 0.21726023742830466
+  },
+  "fold2": {
+   "clean": 0.789666977902272,
+   "channel_dropout:1": 0.7539460228535858,
+   "channel_dropout:2": 0.6648763208987299,
+   "channel_dropout:4": 0.5328679619996147,
+   "channel_dropout:8": 0.32385695018748245,
+   "gain:(0.8, 1.25)": 0.7575148577949699,
+   "gain:(0.5, 2.0)": 0.5657077645873164,
+   "noise:20": 0.7823929571828732,
+   "noise:10": 0.6455826775154506,
+   "noise:0": 0.19967394365153468
+  },
+  "fold3": {
+   "clean": 0.851610644257703,
+   "channel_dropout:1": 0.8015339469120982,
+   "channel_dropout:2": 0.7467520341469921,
+   "channel_dropout:4": 0.49598506069094306,
+   "channel_dropout:8": 0.4109377084167001,
+   "gain:(0.8, 1.25)": 0.8233059890622916,
+   "gain:(0.5, 2.0)": 0.6263271975456849,
+   "noise:20": 0.8341770041349873,
+   "noise:10": 0.6573329331732692,
+   "noise:0": 0.16042083500066695
+  },
+  "fold4": {
+   "clean": 0.7625250100040016,
+   "channel_dropout:1": 0.6863512071495265,
+   "channel_dropout:2": 0.6379251700680273,
+   "channel_dropout:4": 0.5981692677070828,
+   "channel_dropout:8": 0.3426537281579298,
+   "gain:(0.8, 1.25)": 0.7435240762971856,
+   "gain:(0.5, 2.0)": 0.6074796585300787,
+   "noise:20": 0.7618013872215554,
+   "noise:10": 0.658796852074163,
+   "noise:0": 0.2302454315059357
+  }
+ }
+}

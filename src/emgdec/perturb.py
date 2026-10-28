@@ -49,10 +49,17 @@ def _perturb_all(x: np.ndarray, kind: str, param, rng) -> np.ndarray:
         return x * g
     if kind == "noise":
         snr_db = param
-        rms = np.sqrt((x ** 2).mean(axis=(1, 2), keepdims=True)) + 1e-9
-        n = rng.normal(0, 1, x.shape).astype(np.float32)
-        n /= np.sqrt((n ** 2).mean(axis=(1, 2), keepdims=True)) + 1e-9
-        return (x + rms * n * 10 ** (-snr_db / 20)).astype(np.float32)
+        # float32 noise generated per 20k-window block — a full float64
+        # allocation is ~6.3 GB and swaps this machine
+        scale = 10 ** (-snr_db / 20)
+        out = np.empty_like(x, dtype=np.float32)
+        for i in range(0, len(x), 20000):
+            b = x[i:i + 20000].astype(np.float32)
+            rms = np.sqrt((b ** 2).mean(axis=(1, 2), keepdims=True)) + 1e-9
+            n = rng.standard_normal(b.shape, dtype=np.float32)
+            n /= np.sqrt((n ** 2).mean(axis=(1, 2), keepdims=True)) + 1e-9
+            out[i:i + 20000] = b + rms * n * scale
+        return out
     raise ValueError(kind)
 
 

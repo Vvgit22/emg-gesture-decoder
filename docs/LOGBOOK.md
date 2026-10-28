@@ -281,3 +281,10 @@ broke. Written as the work happens.
 - calibration on causal_v1: temperatures 1.41–2.01 across folds; demo
   metas carry T=0.861 (s01_d1) and T=1.991 (fold3); causal ONNX pair
   exported, parity 2.9e-6 / 2.3e-5, argmax 1.000.
+- perturbations (offline_v1b seed-0, controlled synthetic diagnostics,
+  NOT evidence of real re-donning robustness), mean over 5 folds:
+  clean 0.796 | dropout1 0.750 | dropout2 0.686 | dropout4 0.550 |
+  dropout8 0.347 | gain×(0.8,1.25) 0.769 | gain×(0.5,2.0) 0.551 |
+  noise 20dB 0.786 | noise 10dB 0.645 | noise 0dB 0.184.
+  Read: graceful-ish vs dropout1-2; 8 dead channels or 0 dB noise is
+  catastrophic — expected for a small feature-learnt net.
