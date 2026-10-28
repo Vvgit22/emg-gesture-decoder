@@ -294,8 +294,11 @@ Newest entries at the bottom; do not rewrite history — append.
   memmap serves all three lengths; rebuilding memmaps at other lengths
   would produce *different* windows (different alignment) and confound
   length with phase.
-- **What it cannot tell us:** anything about windows LONGER than 250 ms —
-  we only store 250 ms. A longer-window answer needs a rebuild.
+- **What it measures:** accuracy vs analysis-window duration on centre
+  crops of the already-filtered windows (after the 0.5 s trial-start
+  drop). It says nothing about gesture-onset latency, and nothing about
+  windows LONGER than 250 ms — we only store 250 ms; a longer-window
+  answer needs a rebuild.
 - **Alternative rejected:** rebuilding X.f16 at W=128/64 (changes window
   positions, not just length — measures two things at once).
 - **What would change:** longer windows → new memmap, new pipeline.
@@ -351,3 +354,51 @@ Newest entries at the bottom; do not rewrite history — append.
   wasm through Vite (public/ keeps it out of the JS graph entirely).
 - **What would change:** an ORT version bump changes which wasm filenames
   to copy — the sync script is the single place that lists them.
+
+## 2026-10-27 — Perturbation grid (eval-only, predefined)
+
+- **Grid:** channel dropout k∈{1,2,4,8} (3 seeded draws averaged);
+  per-channel gain ×U(0.8,1.25) and ×U(0.5,2.0); AWGN at 20/10/0 dB SNR
+  relative to each window's RMS. cnn/both/cross_subject checkpoints.
+- **Reason:** cheap controlled sensitivity read. Label everywhere:
+  controlled synthetic diagnostics, NOT evidence of real electrode
+  re-donning robustness.
+- **Alternative rejected:** leave-one-channel-out 28-way map (costly,
+  similar information); real re-donning data (does not exist here).
+
+## 2026-10-27 — Analyses read frozen v1 outputs, nothing recomputed
+
+- **Decision:** protocol_v1_analysis reads committed run JSONs + saved
+  .pt + the v1 memmap only; every dump asserts its reconstructed
+  confusion equals the committed record before writing.
+- **Reason:** v1 run files are the frozen benchmark; analyses derive from
+  them, never silently reproduce them. LDA val predictions needed a
+  deterministic re-fit (same code path as v1, asserted equal confusion).
+- **What would change:** a protocol_v2 retrain supersedes all of this.
+
+## 2026-10-27 — offline_v1b is the matched control, not protocol_v1
+
+- **Decision:** the seed study and the causal comparison are read
+  against `offline_v1b` (new code, v1 splits, offline memmap), never
+  against the frozen `protocol_v1` numbers.
+- **Reason:** protocol_v1 records were produced by pre-fix code (seed
+  after init, double-copy loader). At ~1e-7 stats equivalence the new
+  pipeline gives slightly different weights, so an old-vs-new
+  comparison confounds code change with intervention. offline_v1b
+  isolates the intervention.
+- **Alternative rejected:** re-using v1 fold accuracies as the
+  causal baseline — invalid for the same reason.
+
+## 2026-10-28 — Experiment-scoped model store
+
+- **Decision:** `artifacts/models/<experiment>/…` — run names (foldK) are
+  identical across experiments, so a shared dir made last-writer-wins.
+  checkpoint_sha256 in provenance is what let us identify files.
+- **Alternative rejected:** namespacing by run name only — experiment is
+  the true namespace.
+
+## 2026-10-28 — Perturbation targets offline_v1b seed-0
+
+- v1 .pt files were lost in the collision before perturbation ran.
+  offline_v1b seed-0 uses the same splits and architecture with the
+  fixed pipeline; the grid now runs on it and says so in the JSON.

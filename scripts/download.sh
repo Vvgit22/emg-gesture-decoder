@@ -1,4 +1,6 @@
 #!/bin/sh
+# NOTE: SHA256SUMS.txt is fetched from the same BASE as the files
+# (S3 by default); `make verify-manifest` diffs it against physionet.org.
 # Parallel mirror of GrabMyo into data/raw/.
 #
 # Default source is PhysioNet's open AWS S3 mirror

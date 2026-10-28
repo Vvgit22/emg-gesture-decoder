@@ -75,6 +75,7 @@ class Split:
     train: np.ndarray
     val: np.ndarray
     test: np.ndarray
+    split_protocol: str = "v1"
 
     def sizes(self) -> dict[str, int]:
         return {"train": len(self.train), "val": len(self.val), "test": len(self.test)}
@@ -121,13 +122,19 @@ def cross_day(meta: Meta) -> list[Split]:
     return out
 
 
-def cross_subject(meta: Meta, n_folds: int = N_FOLDS_CROSS_SUBJECT, seed: int = SEED) -> list[Split]:
+def cross_subject(meta: Meta, n_folds: int = N_FOLDS_CROSS_SUBJECT, seed: int = SEED,
+                  protocol: str = "v1") -> list[Split]:
     """K folds over *people*. Each person is a test subject in exactly one fold.
 
     Subjects are shuffled once with a fixed seed and dealt into folds like
     cards, so fold membership is reproducible and balanced (±1 subject).
     Within each fold, N_VAL_SUBJECTS of the training subjects are held out
     whole as validation.
+
+    protocol="v1" (frozen): validation subjects are always the first four of
+    the shuffled pool — the fixed-val-subject defect kept in the historical
+    benchmark. protocol="v2" draws them per fold, seeded per fold, with no
+    subject validating in more than one fold.
     """
     _require(meta)
     subj = meta["subject"]
@@ -136,10 +143,29 @@ def cross_subject(meta: Meta, n_folds: int = N_FOLDS_CROSS_SUBJECT, seed: int = 
     fold_of = {int(s): i % n_folds for i, s in enumerate(order)}
 
     out: list[Split] = []
+    used_val: list[set] = []
     for k in range(n_folds):
         test_subjects = [s for s in order if fold_of[int(s)] == k]
         pool = [s for s in order if fold_of[int(s)] != k]
-        val_subjects, train_subjects = pool[:N_VAL_SUBJECTS], pool[N_VAL_SUBJECTS:]
+        if protocol == "v2":
+            # v2: seeded-per-fold draw with the constraint that no subject is
+            # a validation subject in more than one fold (v1 always took the
+            # first four of the pool — the fixed-val-subject defect).
+            cand = None
+            for _attempt in range(1000):
+                r = np.random.default_rng(seed + 1000 + k)
+                c0 = list(r.choice(pool, size=min(N_VAL_SUBJECTS, len(pool)),
+                                 replace=False))
+                if not any(c in v for v in used_val for c in c0):
+                    cand = c0
+                    break
+            if cand is None:  # tiny pools cannot satisfy no-reuse; accept
+                cand = c0
+            used_val.append(set(cand))
+            val_subjects = cand
+            train_subjects = [s for s in pool if s not in val_subjects]
+        else:
+            val_subjects, train_subjects = pool[:N_VAL_SUBJECTS], pool[N_VAL_SUBJECTS:]
         out.append(
             Split(
                 "cross_subject",
@@ -147,6 +173,7 @@ def cross_subject(meta: Meta, n_folds: int = N_FOLDS_CROSS_SUBJECT, seed: int = 
                 np.flatnonzero(np.isin(subj, train_subjects)),
                 np.flatnonzero(np.isin(subj, val_subjects)),
                 np.flatnonzero(np.isin(subj, test_subjects)),
+                split_protocol=protocol,
             )
         )
     return out
@@ -163,8 +190,10 @@ GROUP_COLS = {
 }
 
 
-def make(kind: str, meta: Meta) -> list[Split]:
+def make(kind: str, meta: Meta, protocol: str = "v1") -> list[Split]:
     """Dispatch by name. Raises KeyError for an unknown kind."""
+    if kind == "cross_subject" and protocol == "v2":
+        return cross_subject(meta, protocol="v2")
     return ALL[kind](meta)
 
 

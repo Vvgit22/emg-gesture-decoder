@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import platform
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -41,10 +43,22 @@ from emgdec import metrics as M
 from emgdec.config import GESTURE_NAMES, N_GESTURES
 
 REPO = Path(__file__).resolve().parents[2]
-RUNS_DIR = REPO / "artifacts" / "runs"
-RESULTS = REPO / "artifacts" / "results.json"
+EXP_ROOT = REPO / "artifacts" / "experiments"
+DEFAULT_EXP = "protocol_v1"
 
-MODELS = ("lda", "cnn", "cnn_w128", "cnn_w64")
+
+def exp_runs(exp: str) -> Path:
+    return EXP_ROOT / exp / "runs"
+
+
+def exp_results(exp: str) -> Path:
+    return EXP_ROOT / exp / "results.json"
+
+
+RUNS_DIR = exp_runs(DEFAULT_EXP)  # frozen historical benchmark (read-only use)
+RESULTS = exp_results(DEFAULT_EXP)
+
+MODELS = ("lda", "hgb", "cnn", "cnn_w128", "cnn_w64")
 CONFIGS = ("forearm", "wrist", "both")
 KINDS = ("within_subject", "cross_day", "cross_subject")
 
@@ -66,6 +80,8 @@ class RunRecord:
     params: dict = field(default_factory=dict)
     val_accuracy: float | None = None
     epochs_run: int | None = None
+    status: str = "finished"   # interrupted runs never produce a file
+    provenance: dict = field(default_factory=dict)
 
     def path(self, runs_dir: Path = RUNS_DIR) -> Path:
         return runs_dir / self.model / self.config / self.kind / f"{self.name}.json"
@@ -81,7 +97,9 @@ def save_run(rec: RunRecord, runs_dir: Path = RUNS_DIR) -> Path:
         raise ValueError(f"unknown model/config/kind: {rec.model}/{rec.config}/{rec.kind}")
     p = rec.path(runs_dir)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(asdict(rec), indent=1))
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(asdict(rec), indent=1))
+    os.replace(tmp, p)  # atomic: a crash cannot leave half a record
     return p
 
 
@@ -115,6 +133,42 @@ def _summarise(group: list[RunRecord]) -> dict:
     }
 
 
+def expected_split_counts() -> dict[str, int]:
+    """Split counts from splits.make, if the real meta is on disk."""
+    try:
+        import pyarrow.parquet as pq
+        from emgdec import splits
+        meta_p = REPO / "data" / "memmap" / "meta.parquet"
+        df = pq.read_table(meta_p).to_pandas()
+        meta = {c: df[c].to_numpy() for c in ("subject", "session", "gesture", "trial")}
+        return {k: len(splits.make(k, meta)) for k in KINDS}
+    except Exception:
+        return {}
+
+
+def _check_group(group: list[RunRecord], model: str, config: str,
+                 kind: str, expected: dict[str, int]) -> str | None:
+    flags = []
+    provs = [r.provenance or {} for r in group]
+    if any(not p for p in provs):
+        flags.append("no provenance (historical)")
+    for key, label in (("git_commit", "git commit"),
+                       ("split_protocol", "split protocol"),
+                       ("preprocessing", "preprocessing config")):
+        vals = {json.dumps(p.get(key), sort_keys=True) for p in provs if p}
+        if len(vals) > 1:
+            flags.append(f"mixed {label}")
+    if expected.get(kind) and len(group) < expected[kind]:
+        flags.append(f"incomplete: {len(group)}/{expected[kind]} splits")
+    return "; ".join(flags) if flags else None
+
+
+def _seed_of(name: str) -> str:
+    """Strip a trailing _seed<k> so multi-seed records join their fold."""
+    m = re.search(r"_seed(\d+)$", name)
+    return m.group(1) if m else "0"
+
+
 def build(runs_dir: Path = RUNS_DIR) -> dict:
     recs = load_runs(runs_dir)
     results: dict = {
@@ -125,6 +179,8 @@ def build(runs_dir: Path = RUNS_DIR) -> dict:
         "table": [],
         "cells": {},
     }
+    warnings_out: list[str] = []
+    expected = expected_split_counts()
     for model in MODELS:
         for config in CONFIGS:
             for kind in KINDS:
@@ -132,7 +188,28 @@ def build(runs_dir: Path = RUNS_DIR) -> dict:
                 if not group:
                     continue
                 cell = _summarise(group)
+                seeds = {_seed_of(r.name) for r in group}
+                if len(seeds) > 1:
+                    # multi-seed: mean/SD per seed over shared folds, then
+                    # mean/SD of the per-seed means across seeds
+                    per_seed = {}
+                    for sd in sorted(seeds):
+                        sub = [r for r in group if _seed_of(r.name) == sd]
+                        c = _summarise(sub)
+                        per_seed[sd] = {"n_splits": c["n_splits"],
+                                        "accuracy_mean": c["accuracy_mean"],
+                                        "accuracy_std": c["accuracy_std"]}
+                    means = np.array([v["accuracy_mean"]
+                                      for v in per_seed.values()])
+                    cell["seeds"] = per_seed
+                    cell["seed_mean"] = float(means.mean())
+                    cell["seed_std"] = float(means.std(ddof=1)) if len(means) > 1 else 0.0
                 results["cells"].setdefault(model, {}).setdefault(config, {})[kind] = cell
+                for tag in ("mixed", "no_provenance", "incomplete"):
+                    msg = _check_group(group, model, config, kind, expected)
+                    if msg:
+                        warnings_out.append(msg)
+                        cell["flags"] = msg
                 results["table"].append(
                     {
                         "model": model,
@@ -146,18 +223,25 @@ def build(runs_dir: Path = RUNS_DIR) -> dict:
                         "chance_accuracy": cell["chance_accuracy"],
                     }
                 )
+    results["warnings"] = warnings_out
     return results
 
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--runs", type=Path, default=RUNS_DIR)
-    ap.add_argument("--out", type=Path, default=RESULTS)
+    ap.add_argument("--experiment", default=DEFAULT_EXP,
+                    help="experiment dir under artifacts/experiments/")
+    ap.add_argument("--runs", type=Path, default=None)
+    ap.add_argument("--out", type=Path, default=None)
     a = ap.parse_args(argv)
-    res = build(a.runs)
-    a.out.parent.mkdir(parents=True, exist_ok=True)
-    a.out.write_text(json.dumps(res, indent=1))
-    print(f"{res['n_runs']} runs -> {a.out}")
+    runs = a.runs if a.runs is not None else exp_runs(a.experiment)
+    out = a.out if a.out is not None else exp_results(a.experiment)
+    res = build(runs)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(res, indent=1))
+    print(f"{res['n_runs']} runs -> {out}")
+    for w in res.get("warnings", []):
+        print(f"  warning: {w}")
     for row in res["table"]:
         print(
             f"{row['model']:>4} {row['config']:>8} {row['kind']:>15}  "

@@ -1,5 +1,7 @@
 """Fast CPU tests for the TinyCNN and the training loop — fake data only."""
 
+import json
+
 import numpy as np
 import torch
 
@@ -86,3 +88,108 @@ def test_train_split_end_to_end_and_leak_checked(monkeypatch):
     assert np.asarray(rec.confusion).shape == (17, 17)
     assert np.asarray(rec.confusion).sum() == rec.n_test
     assert rec.epochs_run <= 2
+
+
+def test_train_split_deterministic_and_order_independent():
+    """Same split twice on CPU: bit-identical record; and a run executed
+    after a different split must equal one executed alone."""
+    meta = _fake_meta()
+    n = len(meta["subject"])
+    rng = np.random.default_rng(2)
+    X = rng.normal(0, 1, (n, 28, 16)).astype(np.float32)
+    sp = splits.make("within_subject", meta)
+    r1 = T.train_split(X, meta, sp[0], "both", device="cpu", max_epochs=2,
+                       patience=1, save_weights=False)
+    r2 = T.train_split(X, meta, sp[0], "both", device="cpu", max_epochs=2,
+                       patience=1, save_weights=False)
+    assert r1.confusion == r2.confusion
+    # order independence: run split 1 first, then split 0 again
+    T.train_split(X, meta, sp[1], "both", device="cpu", max_epochs=1,
+                  patience=1, save_weights=False)
+    r3 = T.train_split(X, meta, sp[0], "both", device="cpu", max_epochs=2,
+                       patience=1, save_weights=False)
+    assert r1.confusion == r3.confusion
+
+
+def test_trial_majority_vote_groups_full_key():
+    """Two trials of 35 windows, 20 correct each -> 100% trial-level.
+    Catches pooling by trial number alone (the 20.6% bug)."""
+    from emgdec.report_participants import _trial_accuracy
+    parts = {1: []}
+    for trial, wrong in ((6, [1] * 15), (7, [2] * 15)):
+        y = np.full(35, 3)
+        p = np.full(35, 3)
+        p[:15] = wrong  # 15/35 wrong -> majority still 3
+        parts[1].append((y, p, np.full(35, trial), np.arange(35),
+                         np.ones(35, int), np.full(35, 4)))
+    assert _trial_accuracy(parts) == 1.0
+
+
+def test_v2_splits_same_tests_distinct_vals():
+    # 12 subjects x 1 session x 3 gestures x 4 trials -> real val pools
+    rows = [(s, 1, g, t) for s in range(1, 13) for g in (1, 2, 3)
+            for t in range(1, 5)]
+    a = np.array(rows, dtype=np.int64)
+    meta = {"subject": a[:, 0], "session": a[:, 1],
+            "gesture": a[:, 2], "trial": a[:, 3]}
+    v1 = splits.make("cross_subject", meta)
+    v2 = splits.make("cross_subject", meta, protocol="v2")
+    for s1, s2 in zip(v1, v2):
+        assert np.array_equal(np.sort(s1.test), np.sort(s2.test))
+    subs_v1 = [set(meta["subject"][s.val].tolist()) for s in v1]
+    subs_v2 = [set(meta["subject"][s.val].tolist()) for s in v2]
+    assert any(a != b for a, b in zip(subs_v1, subs_v2))  # v2 re-draws vals
+
+
+def test_norm_stats_matches_numpy():
+    from emgdec.train import _norm_stats
+    rng = np.random.default_rng(7)
+    x = rng.normal(2, 0.5, (5000, 28, 64)).astype(np.float16)
+    m, s = _norm_stats(x)
+    xf = x.astype(np.float64)
+    np.testing.assert_allclose(m, xf.mean(axis=(0, 2)), atol=1e-6, rtol=1e-6)
+    np.testing.assert_allclose(s, xf.std(axis=(0, 2)), atol=1e-6, rtol=1e-6)
+
+
+def test_x_dir_changes_data_and_provenance(tmp_path):
+    """Two memmap dirs with different contents → different confusion and
+    different provenance x_dir (the --x-did-nothing regression)."""
+    meta = _fake_meta()
+    n = len(meta["subject"])
+    for name, amp in (("a", 1.0), ("b", -1.0)):
+        d = tmp_path / name
+        d.mkdir()
+        x = (np.random.default_rng(1).normal(
+            0, 0.5, (n, 28, 16)) + amp).astype(np.float16)
+        (d / "X.f16").write_bytes(x.tobytes())
+        (d / "shape.json").write_text(
+            json.dumps({"N": n, "C": 28, "W": 16}))
+    import emgdec.train as T
+    sp = splits.make("within_subject", meta)
+    recs = {}
+    for name in ("a", "b"):
+        d = tmp_path / name
+        X = np.memmap(d / "X.f16", dtype=np.float16, mode="r",
+                      shape=(n, 28, 16))
+        recs[name] = T.train_split(X, meta, sp[0], "both", device="cpu",
+                                   max_epochs=1, patience=1,
+                                   save_weights=False, x_dir=d)
+    assert recs["a"].provenance["x_dir"] != recs["b"].provenance["x_dir"]
+    assert recs["a"].provenance["preprocessing_mode"] == "offline"
+
+
+def test_seed_offsets_write_distinct_records(tmp_path):
+    """Offsets 0 and 1 produce two files with different training seeds."""
+    meta = _fake_meta()
+    n = len(meta["subject"])
+    rng = np.random.default_rng(0)
+    X = rng.normal(0, 1, (n, 28, 16)).astype(np.float32)
+    import emgdec.train as T
+    sp = splits.make("within_subject", meta)
+    r0 = T.train_split(X, meta, sp[0], "both", device="cpu", max_epochs=1,
+                       patience=1, save_weights=False, seed_offset=0)
+    r1 = T.train_split(X, meta, sp[0], "both", device="cpu", max_epochs=1,
+                       patience=1, save_weights=False, seed_offset=1)
+    assert r0.name != r1.name
+    assert r0.seed != r1.seed
+    assert r0.provenance["seed"] != r1.provenance["seed"]

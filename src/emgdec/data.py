@@ -116,11 +116,28 @@ def verify(raw_dir: str | Path = RAW_DIR) -> tuple[int, int, list[str]]:
 
 def _main() -> None:
     if "--verify" in sys.argv:
+        allow = "--allow-subset" in sys.argv
         ok, failed, missing = verify()
-        print(f"verify: {ok} ok, {failed} failed, {len(missing)} missing")
+        # coverage check: the full grid is 43 subjects x 3 sessions x
+        # 17 gestures x 7 trials of paired .dat/.hea records
+        expected = 43 * 3 * 17 * 7
+        have = ok // 2  # each trial = .dat + .hea
+        print(f"verify: {ok} ok, {failed} failed, {len(missing)} missing "
+              f"(trials {have}/{expected})")
         for name in missing[:10]:
             print(f"  missing: {name}")
-        sys.exit(1 if failed or (not missing and ok == 0) else 0)
+        if failed or missing or have != expected:
+            if allow:
+                from pathlib import Path as _P
+                (_P(RAW_DIR) / "SUBSET.txt").write_text(
+                    f"{have}/{expected} trials present\n")
+                print("SUBSET: incomplete dataset accepted "
+                      "(data/raw/SUBSET.txt written)")
+                sys.exit(0)
+            print("FAILED: dataset incomplete; use --allow-subset to "
+                  "accept anyway")
+            sys.exit(1)
+        sys.exit(0)
 
 
 if __name__ == "__main__":
