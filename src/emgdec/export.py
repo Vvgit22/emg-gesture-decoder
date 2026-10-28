@@ -63,9 +63,11 @@ class ParityError(RuntimeError):
 
 
 def export(model: str = "cnn", config: str = "both", kind: str = "within_subject",
-           name: str = "s01_d1", out_dir: Path = ONNX_DIR) -> Path:
+           name: str = "s01_d1", out_dir: Path = ONNX_DIR,
+           experiment: str = "protocol_v1",
+           x_dir: Path | None = None) -> Path:
     """Load the saved weights and export ONNX + meta.json. Returns path."""
-    pt = MODELS_DIR / model / config / kind / f"{name}.pt"
+    pt = MODELS_DIR / experiment / model / config / kind / f"{name}.pt"
     if not pt.exists():
         raise FileNotFoundError(f"no saved weights at {pt} "
                                 "(train with save_weights first)")
@@ -121,11 +123,11 @@ def verify(onnx_path: Path, pt_path: Path, x_test: np.ndarray,
 
 
 def _test_windows(model: str, config: str, kind: str, name: str,
-                  n: int = 512) -> np.ndarray:
+                  n: int = 512, x_dir=None) -> np.ndarray:
     """Real held-out test windows of this split (first n)."""
     meta = _load_meta()
     split = _find_split(meta, kind, name)
-    X, _ = _open_X()
+    X, _ = _open_X(x_dir) if x_dir else _open_X()
     chans = np.asarray(list(CHANNELS[config]))
     idx = np.sort(np.asarray(split.test))[:n]
     return np.asarray(X[idx][:, chans, :], dtype=np.float32)
@@ -144,10 +146,17 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--config", default="both")
     ap.add_argument("--kind", default="within_subject")
     ap.add_argument("--name", default="s01_d1")
+    ap.add_argument("--experiment", default="protocol_v1")
+    ap.add_argument("--x", default=None)
     a = ap.parse_args(argv)
-    onnx_path = export(a.model, a.config, a.kind, a.name)
-    pt = MODELS_DIR / a.model / a.config / a.kind / f"{a.name}.pt"
-    x_test = _test_windows(a.model, a.config, a.kind, a.name)
+    onnx_path = export(a.model, a.config, a.kind, a.name,
+                       out_dir=ONNX_DIR / a.experiment,
+                       experiment=a.experiment,
+                       x_dir=Path(a.x) if a.x else None)
+    pt = (MODELS_DIR / a.experiment / a.model / a.config / a.kind
+          / f"{a.name}.pt")
+    x_test = _test_windows(a.model, a.config, a.kind, a.name,
+                           x_dir=Path(a.x) if a.x else None)
     res = verify(onnx_path, pt, x_test)
     _record_parity(onnx_path, res)
     # bake parity into the meta sidecar the demo ships

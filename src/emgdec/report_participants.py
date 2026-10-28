@@ -15,6 +15,7 @@ Outputs artifacts/experiments/protocol_v1_analysis/participants.{json,md}
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -23,8 +24,10 @@ from emgdec import metrics
 from emgdec.config import GESTURE_NAMES, N_GESTURES
 
 REPO = Path(__file__).resolve().parents[2]
-PRED = REPO / "artifacts" / "experiments" / "protocol_v1_analysis" / "predictions"
-OUTD = REPO / "artifacts" / "experiments" / "protocol_v1_analysis"
+PRED = Path(sys.argv[1]) if len(sys.argv) > 1 else \
+    REPO / "artifacts" / "experiments" / "protocol_v1_analysis" / "predictions"
+OUTD = (Path(sys.argv[2]) if len(sys.argv) > 2 else
+        REPO / "artifacts" / "experiments" / "protocol_v1_analysis")
 REST = 16  # 0-based gesture 17 = Rest
 
 
@@ -100,8 +103,14 @@ def main() -> None:
     report = {"note": "windows within a trial are correlated; the "
                       "participant is the resampling/reporting unit",
               "kinds": {}}
-    for kind in ("cross_subject", "cross_day"):
-        for model in ("cnn", "lda"):
+    kinds = sys.argv[3].split(",") if len(sys.argv) > 3 else \
+        ["cross_subject", "cross_day"]
+    models_l = sys.argv[4].split(",") if len(sys.argv) > 4 else \
+        ["cnn", "lda"]
+    for kind in kinds:
+        for model in models_l:
+            if not (PRED / model / "both" / kind).exists():
+                continue
             total, parts = _cm_for(kind, model, "both")
             per = _per_participant(parts)
             tp = np.diag(total).astype(float)
@@ -124,11 +133,14 @@ def main() -> None:
                          "active_to_rest": float(
                              total[:REST, REST].sum() / total[:REST].sum())}}
             report["kinds"].setdefault(kind, {})[model] = entry
-        cnn = report["kinds"][kind]["cnn"]["per_participant"]
-        lda = report["kinds"][kind]["lda"]["per_participant"]
-        c = {int(k): v for k, v in cnn.items()}
-        lda_p = {int(k): v for k, v in lda.items()}
-        report["kinds"][kind]["paired_cnn_minus_lda"] = _bootstrap_diff(c, lda_p)
+        if "cnn" in report["kinds"][kind] and \
+                "lda" in report["kinds"][kind]:
+            cnn = report["kinds"][kind]["cnn"]["per_participant"]
+            lda = report["kinds"][kind]["lda"]["per_participant"]
+            c = {int(k): v for k, v in cnn.items()}
+            lda_p = {int(k): v for k, v in lda.items()}
+            report["kinds"][kind]["paired_cnn_minus_lda"] = \
+                _bootstrap_diff(c, lda_p)
     OUTD.mkdir(parents=True, exist_ok=True)
     (OUTD / "participants.json").write_text(json.dumps(report, indent=1))
     md = ["# Participant-level results\n",
@@ -149,6 +161,8 @@ def main() -> None:
                       f"{100*models[model]['trial_level_majority_accuracy']:.2f}%\n"
                       f"- rest→active {100*models[model]['rest_errors_pooled']['rest_to_active']:.2f}%, "
                       f"active→rest {100*models[model]['rest_errors_pooled']['active_to_rest']:.2f}%\n")
+        if "paired_cnn_minus_lda" not in models:
+            continue
         d = models["paired_cnn_minus_lda"]
         md.append(f"### paired CNN−LDA ({kind})\n"
                   f"mean {d['mean_diff_pp']:.2f} pp, SD {d['sd_diff_pp']:.2f} pp, "
