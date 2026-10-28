@@ -86,3 +86,7 @@ check: lint test
 export:
 	uv run python -m emgdec.export --model cnn --config both --kind within_subject --name s01_d1 --experiment $(if $(EXP),$(EXP),causal_v1) --x data/memmap_causal
 	uv run python -m emgdec.export --model cnn --config both --kind cross_subject --name fold3 --experiment $(if $(EXP),$(EXP),causal_v1) --x data/memmap_causal
+
+# Regenerates prediction dumps for an experiment (needs its checkpoints)
+predictions:
+	uv run python -m emgdec.predict --experiment $(EXP)
