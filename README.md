@@ -35,6 +35,14 @@ make site             # packs artifacts/site/ for the browser demo
 Each regenerates `artifacts/results.json`, the figures, and the ONNX
 models with fixed seeds.
 
+Disk: `data/raw` is ~9.4 GB and each window memmap (`data/memmap`,
+`data/memmap_causal`) ~7.5 GB. All of it is derived from the public
+dataset and can be deleted and rebuilt with the commands above. The
+trained weights (`artifacts/models/`) and prediction dumps
+(`artifacts/experiments/*/predictions/`) are not tracked in git; a
+backup is attached to the GitHub release `artifacts-2026-10-29`
+(extract at the repo root).
+
 ## Results
 
 <!-- results:start -->
