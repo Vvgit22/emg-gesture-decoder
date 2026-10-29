@@ -11,6 +11,16 @@
  "benchmark": {
   "experiments": {
    "causal_v1": {
+    "cnn/forearm/cross_subject": {
+     "accuracy_mean": 0.6663231959450446,
+     "accuracy_std": 0.05255629104629444,
+     "n_splits": 5
+    },
+    "cnn/wrist/cross_subject": {
+     "accuracy_mean": 0.6113523187052599,
+     "accuracy_std": 0.026838397676762497,
+     "n_splits": 5
+    },
     "cnn/both/within_subject": {
      "accuracy_mean": 0.9266562438929061,
      "accuracy_std": 0.060822591088937124,
@@ -23,12 +33,22 @@
     }
    },
    "offline_v1b": {
+    "cnn/forearm/cross_subject": {
+     "accuracy_mean": 0.6735311902538793,
+     "accuracy_std": 0.02261298390857723,
+     "n_splits": 5
+    },
+    "cnn/wrist/cross_subject": {
+     "accuracy_mean": 0.6098683918011649,
+     "accuracy_std": 0.023551355388218728,
+     "n_splits": 5
+    },
     "cnn/both/cross_subject": {
-     "accuracy_mean": 0.8026271990277591,
-     "accuracy_std": 0.03393569191230592,
-     "n_splits": 15,
-     "seed_mean": 0.8026271990277594,
-     "seed_std": 0.006443610262647993
+     "accuracy_mean": 0.8006916933440043,
+     "accuracy_std": 0.03309667154370006,
+     "n_splits": 40,
+     "seed_mean": 0.8006916933440043,
+     "seed_std": 0.004327704104585717
     }
    },
    "protocol_v1": {
