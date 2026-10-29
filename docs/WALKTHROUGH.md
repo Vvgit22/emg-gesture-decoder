@@ -390,3 +390,14 @@ make test       # the test suite, including the leak checks
 ```
 
 Everything is seeded; running it twice gives the same `results.json`.
+
+## Adapting to a new person
+
+A model trained on 42 strangers reaches about 80% on the 43rd person it has
+never seen. How much of that person's own signal fixes the gap? We let the
+base model, which never saw this person, watch a few repetitions of each
+gesture recorded on day 1, then scored it on days 8 and 29. One repetition
+per gesture lifts the average to about 84%; three repetitions, about 88%.
+The honest wrinkle: with just one repetition the average rises but the
+worst person actually gets worse, small-data fine-tuning can overfit an
+individual. By three repetitions even the worst person improves.
