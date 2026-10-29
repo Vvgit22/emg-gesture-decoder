@@ -117,6 +117,33 @@ def main() -> None:
         summary["calibration"] = {
             "ece_raw_min": min(raw_ece), "ece_raw_max": max(raw_ece),
             "ece_cal_min": min(cal_ece), "ece_cal_max": max(cal_ece)}
+    # participant stats per seed (offline_v1b has 8 seeds)
+    pbs = {}
+    for exp in exps:
+        pd = EXP / exp / "participants_by_seed"
+        if pd.exists():
+            pbs[exp] = json.loads(pd.read_text())
+    if pbs:
+        summary["participants_by_seed"] = pbs
+    # causal vs offline single-ring pairings (causal_v1 vs offline_v1b seed0)
+    for cfg in ("forearm", "wrist"):
+        try:
+            ca = _folds("causal_v1", cfg)
+            ob = _folds("offline_v1b", cfg)
+            if ca and ob:
+                ds = [c["acc"] - o["acc"] for c, o in zip(ca, ob)]
+                summary.setdefault("comparisons", {})[f"causal_vs_offline_{cfg}"] = {
+                    "per_fold": [{"causal": c["acc"], "offline": o["acc"],
+                                  "delta": c["acc"] - o["acc"]}
+                                 for c, o in zip(ca, ob)],
+                    "mean_delta": float(np.mean(ds)),
+                    "sd_delta": float(np.std(ds, ddof=1))}
+        except Exception:
+            pass
+    # adaptation block
+    aj = EXP / "adapt_v1" / "adapt.json"
+    if aj.exists():
+        summary["adaptation"] = json.loads(aj.read_text())
     per = EXP / "protocol_v1_analysis" / "perturbations.json"
     if per.exists():
         d = json.loads(per.read_text())["folds"]
@@ -133,13 +160,24 @@ def main() -> None:
                             config][kind]["per_seed"] = [
                             {"seed": s, "accuracy_mean": v["accuracy_mean"]}
                             for s, v in c["seeds"].items()]
+                        means = np.array([v["accuracy_mean"]
+                                          for v in c["seeds"].values()])
+                        if len(means) >= 3:
+                            t = {3: 4.303, 4: 3.182, 5: 2.776, 6: 2.571,
+                                 7: 2.447, 8: 2.365}.get(len(means), 2.365)
+                            summary["experiments"][exp]["cells"][model][
+                                config][kind]["seed_ci95"] = [
+                                float(means.mean() - t * means.std(ddof=1)
+                                      / np.sqrt(len(means))),
+                                float(means.mean() + t * means.std(ddof=1)
+                                      / np.sqrt(len(means)))]
     (EXP / "SUMMARY.md").write_text("\n".join(lines))
     (EXP / "summary.json").write_text(json.dumps(summary, indent=1))
     print("\n".join(lines))
 
 
-def _folds(exp: str) -> list[dict]:
-    runs = sorted((EXP / exp / "runs" / "cnn" / "both" / "cross_subject")
+def _folds(exp: str, config: str = "both") -> list[dict]:
+    runs = sorted((EXP / exp / "runs" / "cnn" / config / "cross_subject")
                   .glob("fold?.json"))
     out = []
     for f in runs:

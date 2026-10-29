@@ -4,9 +4,13 @@ Window-level accuracy, mean ± SD over splits. Multi-seed rows show per-seed mea
 
 | experiment | model | config | kind | folds | acc | notes |
 |---|---|---|---|---|---|---|
+| causal_v1 | cnn | forearm | cross_subject | 5 | 66.6 ± 5.3 | participant mean 80.0, SD 8.6, min 54.9, p5 62.7, <70%: 5 |
+| causal_v1 | cnn | wrist | cross_subject | 5 | 61.1 ± 2.7 | participant mean 80.0, SD 8.6, min 54.9, p5 62.7, <70%: 5 |
 | causal_v1 | cnn | both | within_subject | 129 | 92.7 ± 6.1 |  |
 | causal_v1 | cnn | both | cross_subject | 5 | 80.0 ± 4.6 | participant mean 80.0, SD 8.6, min 54.9, p5 62.7, <70%: 5 |
-| offline_v1b | cnn | both | cross_subject | 15 | 80.3 ± 3.4 | per-seed: s0=79.5, s1=80.8, s2=80.4; across-seed SD 0.64; participant mean 79.5, SD 7.8, min 57.6, p5 64.9, <70%: 5 |
+| offline_v1b | cnn | forearm | cross_subject | 5 | 67.4 ± 2.3 | participant mean 79.5, SD 7.8, min 57.6, p5 64.9, <70%: 5 |
+| offline_v1b | cnn | wrist | cross_subject | 5 | 61.0 ± 2.4 | participant mean 79.5, SD 7.8, min 57.6, p5 64.9, <70%: 5 |
+| offline_v1b | cnn | both | cross_subject | 40 | 80.1 ± 3.3 | per-seed: s0=79.5, s1=80.8, s2=80.4, s3=79.8, s4=79.9, s5=79.6, s6=80.1, s7=80.4; across-seed SD 0.43; participant mean 79.5, SD 7.8, min 57.6, p5 64.9, <70%: 5 |
 | protocol_v1 | lda | forearm | within_subject | 129 | 82.0 ± 8.9 |  |
 | protocol_v1 | lda | forearm | cross_day | 43 | 72.2 ± 8.8 |  |
 | protocol_v1 | lda | forearm | cross_subject | 5 | 53.1 ± 2.7 |  |
