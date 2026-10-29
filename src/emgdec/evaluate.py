@@ -58,7 +58,7 @@ def exp_results(exp: str) -> Path:
 RUNS_DIR = exp_runs(DEFAULT_EXP)  # frozen historical benchmark (read-only use)
 RESULTS = exp_results(DEFAULT_EXP)
 
-MODELS = ("lda", "hgb", "cnn", "cnn_w128", "cnn_w64")
+MODELS = ("lda", "hgb", "cnn", "cnn_w128", "cnn_w64", "adapt")
 CONFIGS = ("forearm", "wrist", "both")
 KINDS = ("within_subject", "cross_day", "cross_subject")
 
