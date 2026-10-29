@@ -50,10 +50,7 @@ models with fixed seeds.
 | lda | wrist | 84.7 ± 7.6 | 68.7 ± 11.6 | 40.6 ± 2.7 |
 | lda | both | 93.4 ± 5.7 | 87.0 ± 7.3 | 67.9 ± 2.2 |
 
-Accuracies in %, mean ± std across splits (129 within-subject, 43 cross-day, 5 cross-subject). Chance is 1/17 ≈ 5.9%. Numbers are window-level; fold SD is not
-participant variability (see protocol_v1_analysis/participants.md). The
-headline 79.6% is CNN, both rings, cross-subject, window-level, fold
-mean; wrist-only cross-subject is 60.2%.
+Accuracies in %, mean ± std across splits (129 within-subject, 43 cross-day, 5 cross-subject). Chance is 1/17 ≈ 5.9%.
 
 Live demo: https://vvgit22.github.io/emg/
 
